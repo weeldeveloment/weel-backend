@@ -5,7 +5,7 @@ from django.db.utils import ProgrammingError
 
 from users.models import Client
 from users.models.partners import Partner
-from .models import Notification
+from .models import Notification, PartnerNotification
 
 
 logger = logging.getLogger(__name__)
@@ -146,8 +146,32 @@ class NotificationService:
         partner: Partner,
         title: str,
         message: str,
+        notification_type: str = "system",
         data: dict | None = None,
     ):
+        """Send notification to partner and save to history"""
+        # Save to notification history
+        try:
+            PartnerNotification.objects.create(
+                partner=partner,
+                title=title,
+                body=message,
+                notification_type=notification_type,
+                data=data or {},
+                is_read=False,
+            )
+            logger.info(
+                "Partner notification saved to history. partner=%s title=%s",
+                getattr(partner, "id", None),
+                title,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to save partner notification to history: %s",
+                exc,
+            )
+
+        # Send push notification
         try:
             tokens = list(
                 partner.devices.filter(is_active=True).values_list("fcm_token", flat=True),
