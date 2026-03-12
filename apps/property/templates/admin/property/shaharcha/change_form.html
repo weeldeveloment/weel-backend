@@ -1,0 +1,56 @@
+{% extends "admin/change_form.html" %}
+{% load i18n %}
+
+{% block after_field_sets %}
+{{ block.super }}
+<script>
+(function() {
+  var districtsByRegion = {{ districts_by_region|safe }};
+  var regionEl = document.getElementById('id_region') || document.querySelector('[name="region"]');
+  var districtSelect = document.getElementById('id_district') || document.querySelector('[name="district"]');
+  if (!regionEl || !districtSelect) return;
+
+  function getRegionValue() {
+    var v = (regionEl.value || '').trim();
+    if (v) return v;
+    var opt = regionEl.options && regionEl.options[regionEl.selectedIndex];
+    return opt ? (opt.value || '').trim() : '';
+  }
+
+  function setDistricts(districts) {
+    var firstOption = districtSelect.querySelector('option');
+    var emptyLabel = (firstOption && firstOption.value === '') ? firstOption.textContent : '---------';
+    districtSelect.innerHTML = '';
+    var empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = emptyLabel;
+    districtSelect.appendChild(empty);
+    (districts || []).forEach(function(d) {
+      var opt = document.createElement('option');
+      opt.value = d.pk;
+      opt.textContent = d.title_uz;
+      districtSelect.appendChild(opt);
+    });
+  }
+
+  function updateDistricts() {
+    var regionGuid = (getRegionValue() || '').trim();
+    var list = districtsByRegion[regionGuid] || districtsByRegion[''];
+    setDistricts(Array.isArray(list) ? list : []);
+  }
+
+  function onRegionChange() {
+    updateDistricts();
+  }
+
+  if (regionEl.tagName === 'SELECT') {
+    regionEl.addEventListener('change', onRegionChange);
+  } else {
+    regionEl.addEventListener('change', onRegionChange);
+    regionEl.addEventListener('input', onRegionChange);
+  }
+
+  setTimeout(updateDistricts, 100);
+})();
+</script>
+{% endblock %}
