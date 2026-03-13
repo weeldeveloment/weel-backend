@@ -22,6 +22,7 @@ class Message(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
+        app_label = 'apps.chat'
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['sender', 'receiver']),
@@ -48,6 +49,7 @@ class Conversation(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = 'apps.chat'
         ordering = ['-updated_at']
         constraints = [
             models.UniqueConstraint(fields=['admin_user', 'partner'], name='unique_admin_partner_conversation')
@@ -101,6 +103,7 @@ class ChatMessage(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = 'apps.chat'
         ordering = ['created_at']
         indexes = [
             models.Index(fields=['conversation', 'created_at']),

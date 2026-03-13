@@ -5,7 +5,7 @@ urlpatterns = [
     path("property/", include(("property.urls", "property"), "property")),
     path("story/", include(("stories.urls", "stories"), "stories")),
     path("booking/", include(("booking.urls", "booking"), "booking")),
-    path("notification/", include(("notification.urls", "notification"), "notification")),
+    path("notification/", include(("apps.notification.urls", "notification"), "notification")),
     path("bot/", include(("bot.urls", "bot"), "bot")),
     path("logs/", include(("shared.urls", "shared"), "shared")),
     path("sanatorium/", include(("sanatorium.urls", "sanatorium"), "sanatorium")),
