@@ -42,6 +42,7 @@ class Notification(HardDeleteBaseModel):
 
     class Meta:
         db_table = "notifications"
+        app_label = "notification"
         verbose_name = _("Notification")
         verbose_name_plural = _("Notifications")
         constraints = [
@@ -103,6 +104,7 @@ class PartnerNotification(HardDeleteBaseModel):
 
     class Meta:
         db_table = "partner_notifications"
+        app_label = "notification"
         verbose_name = _("Partner Notification")
         verbose_name_plural = _("Partner Notifications")
         ordering = ["-created_at"]

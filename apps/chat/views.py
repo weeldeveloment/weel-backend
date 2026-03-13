@@ -175,6 +175,7 @@ class ChatViewSet(viewsets.GenericViewSet):
                 partner=partner,
                 title=sender_name,
                 message=message_preview,
+                notification_type="message",
                 data={
                     "type": "chat_message",
                     "conversation_id": conversation.id,
