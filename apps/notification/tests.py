@@ -257,7 +257,7 @@ class SendBookingRemindersTaskTests(TestCase):
 
         from booking.models import Booking
         from booking.tests import BookingTestMixin
-        from notification.tasks import send_booking_reminders
+        from apps.notification.tasks import send_booking_reminders
 
         tomorrow = timezone.localdate() + timedelta(days=1)
         client = make_client()

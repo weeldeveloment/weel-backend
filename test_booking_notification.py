@@ -17,7 +17,7 @@ from users.models.partners import Partner, PartnerDevice
 from users.models.clients import Client
 from property.models import Property
 from booking.models import Booking
-from notification.service import NotificationService
+from apps.notification.service import NotificationService
 
 print("=" * 70)
 print("BOOKING NOTIFICATION TEST - Partner Mobile App")

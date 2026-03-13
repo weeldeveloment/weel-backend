@@ -9,7 +9,7 @@ from channels.layers import get_channel_layer
 from apps.admin_auth.authentication import AdminJWTAuthentication
 from users.authentication import PartnerJWTAuthentication
 from users.models.partners import Partner
-from notification.service import NotificationService
+from apps.notification.service import NotificationService
 from .models import Conversation, ChatMessage
 from .serializers import ChatMessageSerializer, ConversationSerializer, ActorSerializer
 

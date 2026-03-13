@@ -89,7 +89,7 @@ def auto_complete_sanatorium_booking(self, booking_id: str):
 @app.task(name="sanatorium.send_check_in_reminder")
 def send_check_in_reminder():
     """Send reminder notifications 1 day before check-in for confirmed bookings."""
-    from notification.services import send_push_notification
+    from apps.notification.services import send_push_notification
 
     tomorrow = timezone.localdate() + timezone.timedelta(days=1)
     bookings = SanatoriumBooking.objects.filter(
