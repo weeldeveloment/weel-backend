@@ -80,7 +80,7 @@ GLOBAL_APPS = [
 ]
 
 LOCAL_APPS = [
-    "users",
+    "users",      
     "shared",
     "payment",
     "property",
