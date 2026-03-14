@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -17,6 +19,8 @@ from shared.permissions import IsClient, IsPartner
 from users.services import ClientDeviceService, PartnerDeviceService
 from users.authentication import ClientJWTAuthentication, PartnerJWTAuthentication
 from .models import PartnerNotification
+
+logger = logging.getLogger(__name__)
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -51,6 +55,13 @@ class FCMTokenUpdateView(APIView):
 
         fcm_token = serializer.validated_data["fcm_token"]
         device_type = serializer.validated_data["device_type"]
+
+        logger.info(
+            "Client FCM token update requested. client_id=%s device_type=%s token_preview=%s",
+            getattr(request.user, "id", None),
+            device_type,
+            f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
+        )
 
         ClientDeviceService.register_device(
             client=request.user,
@@ -94,6 +105,13 @@ class PartnerFCMTokenUpdateView(APIView):
 
         fcm_token = serializer.validated_data["fcm_token"]
         device_type = serializer.validated_data["device_type"]
+
+        logger.info(
+            "Partner FCM token update requested. partner_id=%s device_type=%s token_preview=%s",
+            getattr(request.user, "id", None),
+            device_type,
+            f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
+        )
 
         PartnerDeviceService.register_device(
             partner=request.user,
