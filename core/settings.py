@@ -1,3 +1,4 @@
+import json
 import logging
 import sys
 import os.path
@@ -487,9 +488,27 @@ FIREBASE_APP = None
 firebase_credentials_path = Path(
     os.getenv("FIREBASE_CREDENTIALS_PATH", BASE_DIR / "certificates/certificate.json")
 )
+firebase_credentials_meta = None
 
 if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(firebase_credentials_path)
+
+if firebase_credentials_path.exists():
+    try:
+        firebase_credentials_meta = json.loads(firebase_credentials_path.read_text())
+        logging.info(
+            "Firebase credentials detected. path=%s project_id=%s client_email=%s private_key_id=%s",
+            firebase_credentials_path,
+            firebase_credentials_meta.get("project_id"),
+            firebase_credentials_meta.get("client_email"),
+            firebase_credentials_meta.get("private_key_id"),
+        )
+    except Exception as firebase_meta_error:
+        logging.exception(
+            "Firebase credentials file exists but could not be parsed. path=%s error=%s",
+            firebase_credentials_path,
+            firebase_meta_error,
+        )
 
 try:
     FIREBASE_APP = get_app()
@@ -499,10 +518,20 @@ except ValueError:
             FIREBASE_APP = initialize_app(
                 credentials.Certificate(str(firebase_credentials_path))
             )
+            logging.info(
+                "Firebase app initialized successfully. path=%s project_id=%s client_email=%s private_key_id=%s",
+                firebase_credentials_path,
+                (firebase_credentials_meta or {}).get("project_id"),
+                (firebase_credentials_meta or {}).get("client_email"),
+                (firebase_credentials_meta or {}).get("private_key_id"),
+            )
         except Exception as firebase_error:
             logging.exception(
-                "Failed to initialize Firebase app from %s: %s",
+                "Failed to initialize Firebase app from %s. project_id=%s client_email=%s private_key_id=%s error=%s",
                 firebase_credentials_path,
+                (firebase_credentials_meta or {}).get("project_id"),
+                (firebase_credentials_meta or {}).get("client_email"),
+                (firebase_credentials_meta or {}).get("private_key_id"),
                 firebase_error,
             )
     else:
@@ -510,6 +539,8 @@ except ValueError:
             "Firebase credentials file not found at %s. Firebase features are disabled.",
             firebase_credentials_path,
         )
+else:
+    logging.info("Firebase app already initialized. credentials_path=%s", firebase_credentials_path)
 
 # Security settings
 if DEBUG:

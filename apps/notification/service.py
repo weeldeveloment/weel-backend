@@ -1,4 +1,5 @@
 import logging
+import os
 
 from firebase_admin import messaging
 from django.db.utils import ProgrammingError
@@ -70,10 +71,11 @@ class FCMService:
             response = messaging.send_each_for_multicast(message)
         except Exception:
             logger.exception(
-                "FCM send failed before per-token response. title=%s tokens_total=%s data_keys=%s",
+                "FCM send failed before per-token response. title=%s tokens_total=%s data_keys=%s credentials_path=%s",
                 title,
                 len(tokens),
                 sorted(normalized_data.keys()),
+                os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
             )
             raise
 
