@@ -11,6 +11,14 @@ from .models import Notification, PartnerNotification
 logger = logging.getLogger(__name__)
 
 
+def _mask_token(token: str | None) -> str:
+    if not token:
+        return "unknown"
+    if len(token) <= 12:
+        return token
+    return f"{token[:8]}...{token[-4:]}"
+
+
 class FCMService:
     @staticmethod
     def _deactivate_invalid_tokens(tokens: list[str]):
@@ -33,23 +41,49 @@ class FCMService:
     def send_to_tokens(
         tokens: list[str], title: str, body: str, data: dict | None = None
     ):
+        normalized_data = data or {}
         if not tokens:
-            logger.info("FCM skipped: empty token list")
+            logger.info(
+                "FCM skipped: empty token list. title=%s data_keys=%s",
+                title,
+                sorted(normalized_data.keys()),
+            )
             return None
+
+        logger.info(
+            "FCM send started. title=%s tokens_total=%s data_keys=%s token_previews=%s",
+            title,
+            len(tokens),
+            sorted(normalized_data.keys()),
+            [_mask_token(token) for token in tokens],
+        )
 
         message = messaging.MulticastMessage(
             notification=messaging.Notification(
                 title=title,
                 body=body,
             ),
-            data=data or {},
+            data=normalized_data,
             tokens=tokens,
         )
-        response = messaging.send_each_for_multicast(message)
+        try:
+            response = messaging.send_each_for_multicast(message)
+        except Exception:
+            logger.exception(
+                "FCM send failed before per-token response. title=%s tokens_total=%s data_keys=%s",
+                title,
+                len(tokens),
+                sorted(normalized_data.keys()),
+            )
+            raise
 
         invalid_tokens: list[str] = []
         for idx, send_response in enumerate(response.responses):
             if send_response.success:
+                logger.info(
+                    "FCM token delivery succeeded. token=%s",
+                    _mask_token(tokens[idx] if idx < len(tokens) else "unknown"),
+                )
                 continue
 
             token = tokens[idx] if idx < len(tokens) else "unknown"
@@ -58,7 +92,7 @@ class FCMService:
 
             logger.warning(
                 "FCM token delivery failed. token=%s code=%s error=%s",
-                token,
+                _mask_token(token),
                 error_code,
                 error_message,
             )
@@ -76,12 +110,12 @@ class FCMService:
             logger.info("FCM invalid tokens deactivated: count=%s", len(invalid_tokens))
 
         logger.info(
-            "FCM info",
-            extra={
-                "success": response.success_count,
-                "failure": response.failure_count,
-                "tokens_total": len(tokens),
-            },
+            "FCM send finished. title=%s success=%s failure=%s tokens_total=%s invalidated=%s",
+            title,
+            response.success_count,
+            response.failure_count,
+            len(tokens),
+            len(invalid_tokens),
         )
         return response
 
@@ -106,6 +140,16 @@ class NotificationService:
         notification_type: str,
         data: dict | None = None,
     ):
+        normalized_data = NotificationService._normalize_data(data)
+
+        logger.info(
+            "Client notification requested. client_id=%s notification_type=%s title=%s data_keys=%s",
+            getattr(client, "id", None),
+            notification_type,
+            title,
+            sorted(normalized_data.keys()),
+        )
+
         notification = Notification.objects.create(
             recipient=client,
             title=title,
@@ -123,20 +167,34 @@ class NotificationService:
             logger.error("Unable to load client device tokens due to database schema mismatch: %s", exc)
             tokens = []
 
+        logger.info(
+            "Client notification tokens loaded. client_id=%s tokens_total=%s",
+            getattr(client, "id", None),
+            len(tokens),
+        )
+
         response = FCMService.send_to_tokens(
             tokens=tokens,
             title=title,
             body=message,
-            data=NotificationService._normalize_data(data),
+            data=normalized_data,
         )
 
         if response and response.success_count > 0:
             notification.status = Notification.Status.SENT
             notification.save(update_fields=["status"])
+            logger.info(
+                "Client notification marked sent. client_id=%s notification_id=%s success=%s failure=%s",
+                getattr(client, "id", None),
+                getattr(notification, "id", None),
+                response.success_count,
+                response.failure_count,
+            )
         else:
             logger.warning(
-                "Notification remains pending: no successful FCM delivery. recipient=%s",
+                "Notification remains pending: no successful FCM delivery. client_id=%s notification_id=%s",
                 getattr(client, "id", None),
+                getattr(notification, "id", None),
             )
 
         return notification
@@ -150,6 +208,15 @@ class NotificationService:
         data: dict | None = None,
     ):
         """Send notification to partner and save to history"""
+        normalized_data = NotificationService._normalize_data(data)
+        logger.info(
+            "Partner notification requested. partner_id=%s notification_type=%s title=%s data_keys=%s",
+            getattr(partner, "id", None),
+            notification_type,
+            title,
+            sorted(normalized_data.keys()),
+        )
+
         # Save to notification history
         try:
             PartnerNotification.objects.create(
@@ -180,12 +247,31 @@ class NotificationService:
             logger.error("Unable to load partner device tokens due to database schema mismatch: %s", exc)
             tokens = []
 
-        return FCMService.send_to_tokens(
+        logger.info(
+            "Partner notification tokens loaded. partner_id=%s tokens_total=%s",
+            getattr(partner, "id", None),
+            len(tokens),
+        )
+
+        response = FCMService.send_to_tokens(
             tokens=tokens,
             title=title,
             body=message,
-            data=NotificationService._normalize_data(data),
+            data=normalized_data,
         )
+        if response:
+            logger.info(
+                "Partner notification send result. partner_id=%s success=%s failure=%s",
+                getattr(partner, "id", None),
+                response.success_count,
+                response.failure_count,
+            )
+        else:
+            logger.warning(
+                "Partner notification send skipped or produced no response. partner_id=%s",
+                getattr(partner, "id", None),
+            )
+        return response
 
     @staticmethod
     def send_broadcast(notification: Notification):

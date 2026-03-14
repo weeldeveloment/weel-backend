@@ -486,22 +486,36 @@ class ClientDeviceService:
         device_type: str,
     ):
         if not fcm_token:
+            logger.warning(
+                "Client device registration skipped: empty token. client_id=%s device_type=%s",
+                getattr(client, "id", None),
+                device_type,
+            )
             return None
 
         # Deactivate other tokens of the same type
-        ClientDevice.objects.filter(
+        deactivated_count = ClientDevice.objects.filter(
             client=client,
             device_type=device_type,
             is_active=True,
         ).exclude(fcm_token=fcm_token).update(is_active=False)
 
-        client_device, _ = ClientDevice.objects.update_or_create(
+        client_device, created = ClientDevice.objects.update_or_create(
             fcm_token=fcm_token,
             defaults={
                 "client": client,
                 "device_type": device_type,
                 "is_active": True,
             },
+        )
+        logger.info(
+            "Client device registered. client_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
+            getattr(client, "id", None),
+            getattr(client_device, "id", None),
+            created,
+            device_type,
+            deactivated_count,
+            f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
         )
         return client_device
 
@@ -514,23 +528,37 @@ class PartnerDeviceService:
         device_type: str,
     ):
         if not fcm_token:
+            logger.warning(
+                "Partner device registration skipped: empty token. partner_id=%s device_type=%s",
+                getattr(partner, "id", None),
+                device_type,
+            )
             return None
 
         try:
             # Deactivate other active tokens of the same device type for this partner.
-            PartnerDevice.objects.filter(
+            deactivated_count = PartnerDevice.objects.filter(
                 partner=partner,
                 device_type=device_type,
                 is_active=True,
             ).exclude(fcm_token=fcm_token).update(is_active=False)
 
-            partner_device, _ = PartnerDevice.objects.update_or_create(
+            partner_device, created = PartnerDevice.objects.update_or_create(
                 fcm_token=fcm_token,
                 defaults={
                     "partner": partner,
                     "device_type": device_type,
                     "is_active": True,
                 },
+            )
+            logger.info(
+                "Partner device registered. partner_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
+                getattr(partner, "id", None),
+                getattr(partner_device, "id", None),
+                created,
+                device_type,
+                deactivated_count,
+                f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
             )
             return partner_device
         except ProgrammingError as exc:
