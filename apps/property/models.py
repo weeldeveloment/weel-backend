@@ -344,7 +344,7 @@ class Property(HardDeleteBaseModel, VerifiedByMixin):
     is_recommended = models.BooleanField(
         default=False,
         db_default=False,
-        verbose_name=_("Recommended (Рекомендуемые места)"),
+        verbose_name=_("Recommended"),
         help_text=_("Show in «Recommended places» block on main page"),
     )
     img = models.ImageField(
