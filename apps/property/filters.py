@@ -72,11 +72,20 @@ class PropertyFilter(filters.FilterSet):
     district = filters.UUIDFilter(
         field_name="district__guid", lookup_expr="exact", label="district_id"
     )
+    district_id = filters.UUIDFilter(
+        field_name="district__guid", lookup_expr="exact", label="district_id (alias)"
+    )
     shaharcha = filters.UUIDFilter(
         field_name="shaharcha__guid", lookup_expr="exact", label="shaharcha_id"
     )
+    shaharcha_id = filters.UUIDFilter(
+        field_name="shaharcha__guid", lookup_expr="exact", label="shaharcha_id (alias)"
+    )
     mahalla = filters.UUIDFilter(
         field_name="mahalla__guid", lookup_expr="exact", label="mahalla_id"
+    )
+    mahalla_id = filters.UUIDFilter(
+        field_name="mahalla__guid", lookup_expr="exact", label="mahalla_id (alias)"
     )
     property_services = filters.CharFilter(
         field_name="property_services",
@@ -100,8 +109,11 @@ class PropertyFilter(filters.FilterSet):
             "region",
             "region_id",
             "district",
+            "district_id",
             "shaharcha",
+            "shaharcha_id",
             "mahalla",
+            "mahalla_id",
             "property_services",
             "min_price",
             "max_price",
@@ -293,9 +305,9 @@ class PropertyFilter(filters.FilterSet):
         if not valid_property_services_ids:
             return queryset.none()
 
-        return queryset.filter(
-            property_services__guid__in=valid_property_services_ids
-        ).distinct()
+        for service_guid in valid_property_services_ids:
+            queryset = queryset.filter(property_services__guid=service_guid)
+        return queryset.distinct()
 
     def filter_guests(self, queryset, name, value):
         try:
@@ -308,4 +320,9 @@ class PropertyFilter(filters.FilterSet):
         if total_guests <= 0:
             return queryset.none()
 
-        return queryset.filter(property_room__guests__gte=total_guests)
+        filtered = queryset.filter(property_room__guests__gte=total_guests)
+        # Agar mehmon soni bo‘yicha filter bo‘sh natija bersa, guests filterni qo‘llamaymiz
+        # (mahalla/sana bo‘yicha natija qaytadi, sig‘imni frontend ko‘rsatadi)
+        if not filtered.exists():
+            return queryset
+        return filtered
