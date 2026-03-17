@@ -127,6 +127,42 @@ class MahallaListSerializer(LanguageFieldMixin, serializers.ModelSerializer):
         return self.get_lang_field(obj, "title")
 
 
+# --- Location API: bitta endpointda region → district → shaharcha va mahalla ---
+class LocationShaharchaSerializer(LanguageFieldMixin, serializers.ModelSerializer):
+    title = serializers.SerializerMethodField("get_title")
+
+    class Meta:
+        model = Shaharcha
+        fields = ["guid", "title"]
+
+    def get_title(self, obj):
+        return self.get_lang_field(obj, "title")
+
+
+class LocationDistrictSerializer(LanguageFieldMixin, serializers.ModelSerializer):
+    title = serializers.SerializerMethodField("get_title")
+    shaharchas = LocationShaharchaSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = District
+        fields = ["guid", "title", "shaharchas"]
+
+    def get_title(self, obj):
+        return self.get_lang_field(obj, "title")
+
+
+class LocationRegionSerializer(LanguageFieldMixin, serializers.ModelSerializer):
+    title = serializers.SerializerMethodField("get_title")
+    districts = LocationDistrictSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Region
+        fields = ["guid", "title", "img", "districts"]
+
+    def get_title(self, obj):
+        return self.get_lang_field(obj, "title")
+
+
 class PropertyServiceListSerializer(LanguageFieldMixin, serializers.ModelSerializer):
     property_type = PropertyTypeListSerializer()
     title = serializers.SerializerMethodField("get_title")

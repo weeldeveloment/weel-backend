@@ -1,7 +1,7 @@
 import uuid as uuid_module
 from datetime import date
 
-from django.db.models import Avg, Case, When, F, Q, DecimalField, Value
+from django.db.models import Avg, Case, When, F, Q, DecimalField, Value, Prefetch, IntegerField
 from django.db.models.aggregates import Min, Count
 from django.db.models.functions import Coalesce
 from django_filters.rest_framework import DjangoFilterBackend
@@ -60,11 +60,16 @@ from .serializers import (
     DistrictListSerializer,
     ShaharchaListSerializer,
     MahallaListSerializer,
+    LocationRegionSerializer,
 )
 from users.models import Partner
 from users.authentication import ClientJWTAuthentication, PartnerJWTAuthentication
 from shared.permissions import IsPartner, IsClient, IsPartnerOwnerProperty
 from payment.exchange_rate import exchange_rate
+
+# Recommendations with kind=sanatorium
+from sanatorium.models import Sanatorium
+from sanatorium.serializers import SanatoriumListSerializer
 
 property_id_param = openapi.Parameter(
     "property_id",
@@ -84,10 +89,22 @@ image_id_param = openapi.Parameter(
 
 # Create your views here.
 
+PINNED_PROPERTY_TYPE_GUID = uuid_module.UUID("c185fd69-1faa-4c61-a3f1-59ecd0830e0c")
+
 
 class PropertyTypeListView(ListAPIView):
-    queryset = PropertyType.objects.all()
     serializer_class = PropertyTypeListSerializer
+
+    def get_queryset(self):
+        return (
+            PropertyType.objects.annotate(
+                _order=Case(
+                    When(guid=PINNED_PROPERTY_TYPE_GUID, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by("_order", "title_uz")
+        )
 
     @swagger_auto_schema(
         tags=["Property"],
@@ -240,31 +257,93 @@ class MahallaListView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
 
+class LocationListView(APIView):
+    """
+    Bitta API: region, district, shaharcha va mahalla — hamma joylashuv ma'lumotlari.
+    Response: { "regions": [ { "guid", "title", "img", "districts": [ { "guid", "title", "shaharchas": [...] } ] } ], "mahallas": [ { "guid", "title" } ] }
+    """
+    permission_classes = [AllowAny]
+
+    @swagger_auto_schema(
+        tags=["Property"],
+        operation_summary="Location data (regions, districts, shaharchas, mahallas)",
+        operation_description="Single endpoint returning all location data: regions with nested districts and shaharchas, plus flat mahalla list.",
+        responses={status.HTTP_200_OK: openapi.Response(
+            description="regions (nested districts → shaharchas) and mahallas",
+            examples={"application/json": {
+                "regions": [{"guid": "...", "title": "...", "img": "...", "districts": [{"guid": "...", "title": "...", "shaharchas": [{"guid": "...", "title": "..."}]}]}],
+                "mahallas": [{"guid": "...", "title": "..."}],
+            }},
+        )},
+    )
+    def get(self, request):
+        regions_qs = (
+            Region.objects.all()
+            .prefetch_related(
+                Prefetch(
+                    "districts",
+                    queryset=District.objects.all().prefetch_related("shaharchas"),
+                )
+            )
+            .order_by("title_uz")
+        )
+        mahallas_qs = Mahalla.objects.all().order_by("title_uz")
+
+        regions_data = LocationRegionSerializer(regions_qs, many=True).data
+        mahallas_data = MahallaListSerializer(mahallas_qs, many=True).data
+
+        return Response({"regions": regions_data, "mahallas": mahallas_data})
+
+
 RECOMMENDATION_TYPES = ("best-by-reviews", "featured", "most-booked")
+RECOMMENDATION_KINDS = ("property", "sanatorium")
 
 
 class UnifiedRecommendationsListView(ListAPIView):
     """
-    Bitta API: type query parametri orqali turli recommendation ro'yxatlari.
-    ?type=best-by-reviews — reyting bo'yicha eng yaxshi 10 ta.
-    ?type=featured — Рекомендуемые места (is_recommended).
-    ?type=most-booked — eng ko'p bron qilingan 10 ta.
+    Bitta API: type va kind query parametrlari orqali recommendation ro'yxatlari.
+    kind=property (default): Property ro'yxati; ixtiyoriy property_type=<uuid> — shu turdagi property.
+    kind=sanatorium: Sanatorium ro'yxati (type bo'yicha order: best-by-reviews, featured, most-booked).
     """
 
     serializer_class = PropertyListSerializer
 
+    def _get_kind(self):
+        kind = self.request.query_params.get("kind", "property").strip().lower()
+        if kind not in RECOMMENDATION_KINDS:
+            raise ValidationError(
+                {"kind": _("Use one of: %(kinds)s") % {"kinds": ", ".join(RECOMMENDATION_KINDS)}}
+            )
+        return kind
+
+    def _get_property_type_guid(self):
+        raw = self.request.query_params.get("property_type", "").strip()
+        if not raw:
+            return None
+        try:
+            return uuid_module.UUID(raw)
+        except (ValueError, TypeError):
+            raise ValidationError({"property_type": _("Must be a valid UUID.")})
+
+    def get_serializer_class(self):
+        if self._get_kind() == "sanatorium":
+            return SanatoriumListSerializer
+        return PropertyListSerializer
+
     def get_queryset(self):
         rec_type = self.request.query_params.get("type", "").strip().lower()
-        if rec_type not in RECOMMENDATION_TYPES:
-            raise ValidationError(
-                {
-                    "type": _(
-                        "Invalid or missing. Use one of: %(types)s"
-                    ) % {"types": ", ".join(RECOMMENDATION_TYPES)}
-                }
-            )
+        kind = self._get_kind()
 
+        if kind == "sanatorium":
+            return self._get_sanatorium_queryset(rec_type)
+
+        # kind == "property"
+        if rec_type not in RECOMMENDATION_TYPES:
+            rec_type = "featured"
         base = Property.objects.filter(is_verified=True)
+        property_type_guid = self._get_property_type_guid()
+        if property_type_guid:
+            base = base.filter(property_type__guid=property_type_guid)
         if rec_type == "featured":
             base = base.filter(is_recommended=True)
         annotate_kw = {
@@ -300,24 +379,70 @@ class UnifiedRecommendationsListView(ListAPIView):
             "shaharcha",
         )
 
+    def _get_sanatorium_queryset(self, rec_type):
+        if rec_type not in RECOMMENDATION_TYPES:
+            rec_type = "featured"
+        base = Sanatorium.objects.filter(is_verified=True)
+        annotate_kw = {}
+        if rec_type == "best-by-reviews":
+            annotate_kw["average_rating"] = Coalesce(
+                Avg(
+                    "reviews__rating",
+                    filter=Q(reviews__is_hidden=False) | Q(reviews__is_hidden__isnull=True),
+                ),
+                Value(0),
+                output_field=DecimalField(),
+            )
+        if rec_type == "most-booked":
+            annotate_kw["booking_count"] = Count("bookings")
+        if annotate_kw:
+            base = base.annotate(**annotate_kw)
+        if rec_type == "best-by-reviews":
+            base = base.order_by("-average_rating", "-comment_count")[:10]
+        elif rec_type == "featured":
+            base = base.order_by("-comment_count")[:10]
+        else:  # most-booked
+            base = base.order_by("-booking_count")[:10]
+        return base.select_related("location").prefetch_related("images", "specializations")
+
     @swagger_auto_schema(
         tags=["Property"],
-        operation_summary="Recommendations — single API (by type)",
+        operation_summary="Recommendations — by type and kind (property | sanatorium)",
         operation_description=(
-            "Different recommendation blocks via query param **type**:\n\n"
-            "- **best-by-reviews** — Top 10 properties by rating/reviews\n"
-            "- **featured** — Recommended places (marked is_recommended in Admin)\n"
-            "- **most-booked** — Top 10 most booked properties\n\n"
-            "Example: `GET /api/property/recommendations/?type=featured`"
+            "Query params:\n\n"
+            "- **type** (optional): best-by-reviews | featured | most-booked (default: featured)\n"
+            "- **kind** (optional): property (default) | sanatorium\n"
+            "- **property_type** (optional): PropertyType UUID — berilsa faqat shu turdagi property, berilmasa hammasi\n\n"
+            "Examples:\n"
+            "- `?type=featured` — featured properties\n"
+            "- `?property_type=<uuid>` — faqat shu type dagi propertylar (type default: featured)\n"
+            "- `?type=best-by-reviews&property_type=<uuid>` — shu turdagi eng yaxshi propertylar\n"
+            "- Parametrsiz — barcha (featured) propertylar"
         ),
         manual_parameters=[
             openapi.Parameter(
                 "type",
                 openapi.IN_QUERY,
-                description="best-by-reviews | featured | most-booked",
+                description="best-by-reviews | featured | most-booked (required for property)",
                 type=openapi.TYPE_STRING,
-                required=True,
+                required=False,
                 enum=list(RECOMMENDATION_TYPES),
+            ),
+            openapi.Parameter(
+                "kind",
+                openapi.IN_QUERY,
+                description="property (default) or sanatorium",
+                type=openapi.TYPE_STRING,
+                required=False,
+                enum=list(RECOMMENDATION_KINDS),
+            ),
+            openapi.Parameter(
+                "property_type",
+                openapi.IN_QUERY,
+                description="PropertyType UUID — filter properties by type (only when kind=property)",
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
             ),
         ],
         responses={status.HTTP_200_OK: PropertyListSerializer(many=True)},
@@ -670,6 +795,56 @@ class PropertyListCreateView(ListCreateAPIView):
     )
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
+
+
+class PropertyFilterByLinkView(PropertyListCreateView):
+    """
+    Server-side rendering (SSR): frontend URL yuboradi, backend shu URL bo'yicha filter qilib
+    natijani qaytaradi. DB ga hech narsa saqlanmaydi.
+    """
+
+    http_method_names = ["post"]
+
+    def get_authenticators(self):
+        return []
+
+    def get_permissions(self):
+        return [AllowAny()]
+
+    def get_serializer_class(self):
+        return PropertyListSerializer
+
+    @swagger_auto_schema(
+        tags=["Property"],
+        operation_summary="Properties filter by URL (SSR)",
+        operation_description=(
+            "**Server-side rendering:** frontend dan **url** keladi, backend shu URL ni olib "
+            "query parametrlariga ko'ra propertylarni filter qilib natijani qaytaradi.\n\n"
+            "Body: `{\"url\": \"https://weel.uz/properties?region_id=xxx&min_price=100\"}`. "
+            "URL dagi parametrlar GET /api/property/properties/ dagi kabi (region_id, property_type, "
+            "min_price, max_price, from_date, to_date, ...) qo'llanadi. Natija faqat response da, DB ga yozilmaydi."
+        ),
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["url"],
+            properties={"url": openapi.Schema(type=openapi.TYPE_STRING, description="Frontend dan keladigan filter URL")},
+        ),
+        responses={status.HTTP_200_OK: PropertyListSerializer(many=True), status.HTTP_400_BAD_REQUEST: "url required"},
+    )
+    def post(self, request, *args, **kwargs):
+        from urllib.parse import urlparse
+        from django.http import QueryDict
+
+        data = request.data or {}
+        url = (data.get("url") or data.get("link") or "").strip()
+        if not url:
+            return Response(
+                {"url": [_("This field is required.")]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        query_string = urlparse(url).query
+        request._request.GET = QueryDict(query_string)
+        return self.list(request)
 
 
 class _PropertyTypeListCreateMixin:

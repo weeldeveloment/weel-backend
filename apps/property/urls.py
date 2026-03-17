@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     PropertyTypeListView,
     PropertyListCreateView,
+    PropertyFilterByLinkView,
     ApartmentPropertyListCreateView,
     RegionPropertyListView,
     PropertyImageCreateView,
@@ -18,6 +19,7 @@ from .views import (
     DistrictListView,
     ShaharchaListView,
     MahallaListView,
+    LocationListView,
     UnifiedRecommendationsListView,
     CategoryListView,
     CategoryPropertyRecommendationView,
@@ -27,6 +29,7 @@ from .views import (
 
 urlpatterns = [
     path("types/", PropertyTypeListView.as_view(), name="property-type-list"),
+    path("location/", LocationListView.as_view(), name="location"),
     path("regions/", RegionListView.as_view(), name="region-list"),
     path(
         "regions/<uuid:region_id>/properties/",
@@ -69,12 +72,12 @@ urlpatterns = [
         SavedPropertyListView.as_view(),
         name="saved-property-list",
     ),
-    path("partner/properties/", PartnerPropertyListView.as_view(), name="partner-property-list"),
     path(
-        "properties",
-        PropertyListCreateView.as_view(),
-        name="property-list-create-no-slash",
+        "properties/filter-by-link/",
+        PropertyFilterByLinkView.as_view(),
+        name="property-filter-by-link",
     ),
+    path("partner/properties/", PartnerPropertyListView.as_view(), name="partner-property-list"),
     path(
         "properties/<uuid:property_id>/",
         PropertyRetrieveUpdateDestroyView.as_view(),

@@ -319,15 +319,11 @@ class PropertyAdmin(ModelAdmin):
         "property_type",
         "img",
         "price",
-        "region",
-        "district",
-        "shaharcha",
-        "mahalla",
         "is_verified",
         "is_recommended",
         "created_at",
     ]
-    list_filter = ["property_type", "is_verified", "is_recommended", "mahalla", "created_at"]
+    list_filter = ["property_type", "is_verified", "is_recommended", "created_at"]
     filter_horizontal = ["property_services", "categories"]
 
     inlines = [PropertyImageInline]
