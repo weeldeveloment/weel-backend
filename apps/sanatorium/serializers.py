@@ -427,12 +427,19 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
             "check_out_time",
         ]
 
+    duplicate_title_message = _(
+        "A sanatorium with this title already exists. Please choose a different title."
+    )
+
     @staticmethod
-    def validate_title(value):
+    def _extract_constraint_name(exc):
+        cause = getattr(exc, "__cause__", None)
+        diag = getattr(cause, "diag", None)
+        return getattr(diag, "constraint_name", None)
+
+    def validate_title(self, value):
         if Sanatorium.objects.filter(title=value, is_archived=False).exists():
-            raise serializers.ValidationError(
-                _("A sanatorium with this title already exists")
-            )
+            raise serializers.ValidationError(self.duplicate_title_message)
         return value
 
     @transaction.atomic
@@ -450,13 +457,22 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
                 **validated_data,
             )
         except IntegrityError as exc:
-            detail = str(exc)
-            if "unique_active_sanatorium_title" in detail:
+            constraint_name = self._extract_constraint_name(exc)
+            title = validated_data.get("title")
+
+            if constraint_name == "unique_active_sanatorium_title" or (
+                title
+                and Sanatorium.objects.filter(title=title, is_archived=False).exists()
+            ):
                 raise serializers.ValidationError(
-                    {"title": _("A sanatorium with this title already exists")}
+                    {"title": self.duplicate_title_message}
                 )
             raise serializers.ValidationError(
-                {"detail": _("Could not create sanatorium due to data conflict")}
+                {
+                    "detail": _(
+                        "Could not create sanatorium. Check whether the title is unique and try again."
+                    )
+                }
             )
         sanatorium.specializations.set(specializations)
         sanatorium.treatments.set(treatments)

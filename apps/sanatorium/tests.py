@@ -1149,6 +1149,12 @@ class PartnerEndpointTests(SanatoriumTestMixin, TestCase):
 
         resp = self.api.post("/api/sanatorium/partner/", data=payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("errors", resp.data)
+        self.assertEqual(
+            resp.data["errors"][0]["detail"],
+            "A sanatorium with this title already exists. Please choose a different title.",
+        )
+        self.assertEqual(resp.data["errors"][0]["field"], "title")
 
 
 class ClientBookingEndpointTests(SanatoriumTestMixin, TestCase):
