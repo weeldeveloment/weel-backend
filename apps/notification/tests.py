@@ -132,7 +132,7 @@ class NotificationServiceTests(TestCase):
     def test_send_to_client_creates_notification_and_sends(
         self, mock_send_to_tokens
     ):
-        mock_send_to_tokens.return_value = None
+        mock_send_to_tokens.return_value = MagicMock(success_count=1, failure_count=0)
         client = make_client()
         notification = NotificationService.send_to_client(
             client=client,
@@ -152,6 +152,21 @@ class NotificationServiceTests(TestCase):
         self.assertEqual(call_kw["title"], "Test Title")
         self.assertEqual(call_kw["body"], "Test body")
         self.assertEqual(call_kw["data"], {"key": "value"})
+
+    @patch("notification.service.FCMService.send_to_tokens")
+    def test_send_to_client_keeps_pending_when_fcm_fails(self, mock_send_to_tokens):
+        mock_send_to_tokens.return_value = None
+        client = make_client()
+
+        notification = NotificationService.send_to_client(
+            client=client,
+            title="Test Title",
+            message="Test body",
+            notification_type=Notification.NotificationType.SYSTEM,
+            data={"key": "value"},
+        )
+
+        self.assertEqual(notification.status, Notification.Status.PENDING)
 
 
 class NotificationServiceSendBroadcastTests(TestCase):
@@ -190,6 +205,12 @@ class FCMServiceTests(TestCase):
         )
         self.assertIsNotNone(result)
         mock_send.assert_called_once()
+
+    @patch("notification.service.messaging.send_each_for_multicast")
+    def test_send_to_tokens_returns_none_when_firebase_raises(self, mock_send):
+        mock_send.side_effect = RuntimeError("bad auth")
+        result = FCMService.send_to_tokens(tokens=["token1"], title="T", body="B")
+        self.assertIsNone(result)
 
 
 # ──────────────────────────────────────────────
