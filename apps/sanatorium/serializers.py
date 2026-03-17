@@ -1,7 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db import transaction, models
+from django.db import IntegrityError, transaction, models
 from django.db.models import Avg
 from django.utils.translation import gettext_lazy as _
 
@@ -427,6 +427,14 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
             "check_out_time",
         ]
 
+    @staticmethod
+    def validate_title(value):
+        if Sanatorium.objects.filter(title=value, is_archived=False).exists():
+            raise serializers.ValidationError(
+                _("A sanatorium with this title already exists")
+            )
+        return value
+
     @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
@@ -435,11 +443,21 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
         treatments = validated_data.pop("treatments", [])
 
         location = SanatoriumLocation.objects.create(**location_data)
-        sanatorium = Sanatorium.objects.create(
-            location=location,
-            partner=request.user,
-            **validated_data,
-        )
+        try:
+            sanatorium = Sanatorium.objects.create(
+                location=location,
+                partner=request.user,
+                **validated_data,
+            )
+        except IntegrityError as exc:
+            detail = str(exc)
+            if "unique_active_sanatorium_title" in detail:
+                raise serializers.ValidationError(
+                    {"title": _("A sanatorium with this title already exists")}
+                )
+            raise serializers.ValidationError(
+                {"detail": _("Could not create sanatorium due to data conflict")}
+            )
         sanatorium.specializations.set(specializations)
         sanatorium.treatments.set(treatments)
         return sanatorium
