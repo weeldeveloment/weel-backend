@@ -493,7 +493,8 @@ class ClientDeviceService:
             )
             return None
 
-        if getattr(settings, "USE_NORM_DATASTORE", False):
+        use_norm = getattr(settings, "USE_NORM_DATASTORE", False)
+        if use_norm:
             from norm_store.sync import ensure_norm_customer
             from norm_store.models import NormClientDevice
 
@@ -521,30 +522,55 @@ class ClientDeviceService:
             )
             return client_device
 
-        deactivated_count = ClientDevice.objects.filter(
-            client=client,
-            device_type=device_type,
-            is_active=True,
-        ).exclude(fcm_token=fcm_token).update(is_active=False)
+        try:
+            deactivated_count = ClientDevice.objects.filter(
+                client=client,
+                device_type=device_type,
+                is_active=True,
+            ).exclude(fcm_token=fcm_token).update(is_active=False)
 
-        client_device, created = ClientDevice.objects.update_or_create(
-            fcm_token=fcm_token,
-            defaults={
-                "client": client,
-                "device_type": device_type,
-                "is_active": True,
-            },
-        )
-        logger.info(
-            "Client device registered. client_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
-            getattr(client, "id", None),
-            getattr(client_device, "id", None),
-            created,
-            device_type,
-            deactivated_count,
-            f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
-        )
-        return client_device
+            client_device, created = ClientDevice.objects.update_or_create(
+                fcm_token=fcm_token,
+                defaults={
+                    "client": client,
+                    "device_type": device_type,
+                    "is_active": True,
+                },
+            )
+            logger.info(
+                "Client device registered. client_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
+                getattr(client, "id", None),
+                getattr(client_device, "id", None),
+                created,
+                device_type,
+                deactivated_count,
+                f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
+            )
+            return client_device
+        except ProgrammingError as exc:
+            # If legacy table is missing in production, fallback to norm tables automatically.
+            if 'relation "client_devices" does not exist' in str(exc) or 'relation "users_clientdevice" does not exist' in str(exc):
+                logger.error(
+                    "ClientDevice table is missing, falling back to norm storage.",
+                    extra={"client_id": getattr(client, "id", None)},
+                )
+                from norm_store.sync import ensure_norm_customer
+                from norm_store.models import NormClientDevice
+
+                nc = ensure_norm_customer(client)
+                if not nc:
+                    return None
+                token = fcm_token[:255]
+                dt = (device_type or "")[:10]
+                NormClientDevice.objects.filter(
+                    client=nc, device_type=dt, is_active=True
+                ).exclude(fcm_token=token).update(is_active=False)
+                client_device, _ = NormClientDevice.objects.update_or_create(
+                    fcm_token=token,
+                    defaults={"client": nc, "device_type": dt, "is_active": True},
+                )
+                return client_device
+            raise
 
 
 class PartnerDeviceService:
@@ -563,7 +589,8 @@ class PartnerDeviceService:
             return None
 
         try:
-            if getattr(settings, "USE_NORM_DATASTORE", False):
+            use_norm = getattr(settings, "USE_NORM_DATASTORE", False)
+            if use_norm:
                 from norm_store.sync import ensure_norm_partner
                 from norm_store.models import NormPartnerDevice
 
@@ -622,6 +649,27 @@ class PartnerDeviceService:
                     extra={"partner_id": getattr(partner, "id", None)},
                 )
                 return None
+            if 'relation "partner_devices" does not exist' in str(exc) or 'relation "users_partnerdevice" does not exist' in str(exc):
+                logger.error(
+                    "PartnerDevice table is missing, falling back to norm storage.",
+                    extra={"partner_id": getattr(partner, "id", None)},
+                )
+                from norm_store.sync import ensure_norm_partner
+                from norm_store.models import NormPartnerDevice
+
+                np = ensure_norm_partner(partner)
+                if not np:
+                    return None
+                token = fcm_token[:255]
+                dt = (device_type or "")[:10]
+                NormPartnerDevice.objects.filter(
+                    partner=np, device_type=dt, is_active=True
+                ).exclude(fcm_token=token).update(is_active=False)
+                partner_device, _ = NormPartnerDevice.objects.update_or_create(
+                    fcm_token=token,
+                    defaults={"partner": np, "device_type": dt, "is_active": True},
+                )
+                return partner_device
             raise
 
 

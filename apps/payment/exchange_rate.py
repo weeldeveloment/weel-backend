@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db.utils import ProgrammingError
 from django.utils.translation import gettext_lazy as _
 
 from rest_framework.exceptions import ValidationError
@@ -34,6 +35,7 @@ def exchange_rate():
 
     use_norm = getattr(settings, "USE_NORM_DATASTORE", False)
 
+    # 1) Prefer norm tables if enabled (or if legacy table is missing)
     if use_norm:
         record = _rate_from_norm_today()
         if record:
@@ -43,7 +45,9 @@ def exchange_rate():
         if latest_record:
             cache.set("usd_to_uzs_rate", latest_record.rate, timeout=3600)
             return latest_record.rate
-    else:
+
+    # 2) Legacy ExchangeRate table (may not exist in production)
+    try:
         record = ExchangeRate.objects.filter(currency="USD", date=date.today()).first()
         if record:
             cache.set("usd_to_uzs_rate", record.rate, timeout=86400)
@@ -57,18 +61,13 @@ def exchange_rate():
         if latest_record:
             cache.set("usd_to_uzs_rate", latest_record.rate, timeout=3600)
             return latest_record.rate
-
-    if use_norm:
-        record = ExchangeRate.objects.filter(currency="USD", date=date.today()).first()
+    except ProgrammingError:
+        # Missing legacy table → fallback to norm even if USE_NORM_DATASTORE not set.
+        record = _rate_from_norm_today()
         if record:
             cache.set("usd_to_uzs_rate", record.rate, timeout=86400)
             return record.rate
-        latest_record = (
-            ExchangeRate.objects.filter(currency="USD")
-            .only("rate", "date")
-            .order_by("-date")
-            .first()
-        )
+        latest_record = _rate_from_norm_latest()
         if latest_record:
             cache.set("usd_to_uzs_rate", latest_record.rate, timeout=3600)
             return latest_record.rate
