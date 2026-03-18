@@ -3,8 +3,9 @@ set -e
 
 . /opt/venv/bin/activate
 
-if [ "${APP_ENV:-}" = "production" ] || [ "${DJANGO_ENV:-}" = "production" ] || [ "${SKIP_MIGRATIONS:-false}" = "true" ]; then
-	echo "Skipping migrations."
+# Har deployda DBni yangilash. Faqat SKIP_MIGRATIONS=true bo'lsa o'tkazib yuboriladi.
+if [ "${SKIP_MIGRATIONS:-}" = "true" ] || [ "${SKIP_MIGRATIONS:-}" = "1" ]; then
+	echo "Skipping migrations (SKIP_MIGRATIONS set)."
 else
 	echo "Running migrations..."
 	python manage.py migrate --noinput

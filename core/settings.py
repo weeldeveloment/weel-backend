@@ -79,13 +79,16 @@ GLOBAL_APPS = [
     "django.contrib.staticfiles",
 ]
 
+USE_NORM_DATASTORE = env_bool("USE_NORM_DATASTORE", default=False)
+
 LOCAL_APPS = [
-    "users",      
+    "users",
     "shared",
     "payment",
     "property",
     "stories",
     "booking",
+    "norm_store.apps.NormStoreConfig",
     "apps.notification",
     "bot",
     "sanatorium",

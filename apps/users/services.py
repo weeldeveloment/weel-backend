@@ -493,7 +493,34 @@ class ClientDeviceService:
             )
             return None
 
-        # Deactivate other tokens of the same type
+        if getattr(settings, "USE_NORM_DATASTORE", False):
+            from norm_store.sync import ensure_norm_customer
+            from norm_store.models import NormClientDevice
+
+            nc = ensure_norm_customer(client)
+            if not nc:
+                return None
+            token = fcm_token[:255]
+            dt = (device_type or "")[:10]
+            deactivated_count = NormClientDevice.objects.filter(
+                client=nc, device_type=dt, is_active=True
+            ).exclude(fcm_token=token).update(is_active=False)
+            client_device, created = NormClientDevice.objects.update_or_create(
+                fcm_token=token,
+                defaults={
+                    "client": nc,
+                    "device_type": dt,
+                    "is_active": True,
+                },
+            )
+            logger.info(
+                "Client device registered (norm). client_id=%s device_id=%s created=%s",
+                getattr(client, "id", None),
+                getattr(client_device, "id", None),
+                created,
+            )
+            return client_device
+
         deactivated_count = ClientDevice.objects.filter(
             client=client,
             device_type=device_type,
@@ -536,7 +563,34 @@ class PartnerDeviceService:
             return None
 
         try:
-            # Deactivate other active tokens of the same device type for this partner.
+            if getattr(settings, "USE_NORM_DATASTORE", False):
+                from norm_store.sync import ensure_norm_partner
+                from norm_store.models import NormPartnerDevice
+
+                np = ensure_norm_partner(partner)
+                if not np:
+                    return None
+                token = fcm_token[:255]
+                dt = (device_type or "")[:10]
+                deactivated_count = NormPartnerDevice.objects.filter(
+                    partner=np, device_type=dt, is_active=True
+                ).exclude(fcm_token=token).update(is_active=False)
+                partner_device, created = NormPartnerDevice.objects.update_or_create(
+                    fcm_token=token,
+                    defaults={
+                        "partner": np,
+                        "device_type": dt,
+                        "is_active": True,
+                    },
+                )
+                logger.info(
+                    "Partner device registered (norm). partner_id=%s device_id=%s created=%s",
+                    getattr(partner, "id", None),
+                    getattr(partner_device, "id", None),
+                    created,
+                )
+                return partner_device
+
             deactivated_count = PartnerDevice.objects.filter(
                 partner=partner,
                 device_type=device_type,

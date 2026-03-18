@@ -39,11 +39,18 @@ def update_exchange_rate():
     response.raise_for_status()
     rate = _extract_usd_to_uzs_rate(response.json())
 
-    ExchangeRate.objects.update_or_create(
-        currency="USD",
-        date=date.today(),
-        defaults={
-            "rate": rate,
-        },
-    )
+    if getattr(settings, "USE_NORM_DATASTORE", False):
+        from norm_store.models import NormExchangeRate
+
+        NormExchangeRate.objects.update_or_create(
+            currency="USD",
+            date=date.today(),
+            defaults={"rate": rate},
+        )
+    else:
+        ExchangeRate.objects.update_or_create(
+            currency="USD",
+            date=date.today(),
+            defaults={"rate": rate},
+        )
     cache.set("usd_to_uzs_rate", rate, timeout=86400)  # 86400 - 24 hours
