@@ -56,6 +56,7 @@ class ExchangeRate(HardDeleteBaseModel):
     date = models.DateField(auto_now=True, db_index=True, verbose_name=_("Date"))
 
     class Meta:
+        db_table = "norm_exchange_rates"
         verbose_name = _("Exchange rate")
         verbose_name_plural = _("Exchange rates")
         indexes = [

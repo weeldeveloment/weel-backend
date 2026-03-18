@@ -69,6 +69,7 @@ class ClientSession(HardDeleteBaseModel):
     last_ip = models.GenericIPAddressField(verbose_name=_("Last IP"))
 
     class Meta:
+        db_table = "norm_client_sessions"
         verbose_name = _("Client session")
         verbose_name_plural = _("Client sessions")
 
@@ -102,7 +103,7 @@ class ClientDevice(HardDeleteBaseModel):
     is_active = models.BooleanField(default=True, verbose_name=_("Active"))
 
     class Meta:
-        db_table = "client_devices"
+        db_table = "norm_client_devices"
         verbose_name = _("Client device")
         verbose_name_plural = _("Client devices")
 
