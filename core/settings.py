@@ -124,6 +124,7 @@ MIDDLEWARE = [
     "django.middleware.locale.LocaleMiddleware",
     "django_prometheus.middleware.PrometheusAfterMiddleware",
     "request_logging.middleware.LoggingMiddleware",  # django-request-logging
+    "core.middleware.exception_logging.ExceptionLoggingMiddleware",
 ]
 
 ROOT_URLCONF = "core.urls"

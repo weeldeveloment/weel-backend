@@ -142,6 +142,27 @@ class SanatoriumLocation(HardDeleteBaseModel):
         return f"{self.city} | {self.country}"
 
 
+class SanatoriumTreatment(models.Model):
+    """Through model for Sanatorium–Treatment M2M (table: sanatorium_sanatorium_treatment)."""
+    sanatorium = models.ForeignKey(
+        "Sanatorium",
+        on_delete=models.CASCADE,
+        related_name="sanatorium_treatment_set",
+    )
+    treatment = models.ForeignKey(
+        Treatment,
+        on_delete=models.CASCADE,
+        related_name="sanatorium_treatment_set",
+    )
+    is_paid_extra = models.BooleanField(
+        default=False, db_default=False, verbose_name=_("Is paid extra")
+    )
+
+    class Meta:
+        db_table = "sanatorium_sanatorium_treatment"
+        unique_together = [["sanatorium", "treatment"]]
+
+
 class Sanatorium(HardDeleteBaseModel, VerifiedByMixin):
     verification_status = models.CharField(
         max_length=10,
@@ -182,6 +203,7 @@ class Sanatorium(HardDeleteBaseModel, VerifiedByMixin):
         Treatment,
         related_name="sanatoriums",
         blank=True,
+        through=SanatoriumTreatment,
         verbose_name=_("Treatments"),
     )
     check_in_time = models.TimeField(
@@ -195,6 +217,29 @@ class Sanatorium(HardDeleteBaseModel, VerifiedByMixin):
     )
     is_archived = models.BooleanField(
         default=False, db_default=False, verbose_name=_("Is archived")
+    )
+    address = models.CharField(
+        max_length=255, default="", blank=True, verbose_name=_("Address")
+    )
+    inn = models.CharField(
+        max_length=50, default="", blank=True, verbose_name=_("INN")
+    )
+    legal_name = models.CharField(
+        max_length=255, default="", blank=True, verbose_name=_("Legal name")
+    )
+    meals_per_day = models.PositiveSmallIntegerField(
+        null=True, blank=True, verbose_name=_("Meals per day")
+    )
+    region = models.ForeignKey(
+        "property.Region",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sanatoriums",
+        verbose_name=_("Region"),
+    )
+    total_rooms_count = models.PositiveIntegerField(
+        default=0, db_default=0, verbose_name=_("Total rooms count")
     )
 
     class Meta:

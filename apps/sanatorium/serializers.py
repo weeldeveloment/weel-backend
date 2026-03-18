@@ -20,6 +20,7 @@ from .models import (
     Sanatorium,
     SanatoriumImage,
     SanatoriumLocation,
+    SanatoriumTreatment,
     SanatoriumRoom,
     SanatoriumRoomImage,
     SanatoriumRoomPrice,
@@ -450,10 +451,12 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
         treatments = validated_data.pop("treatments", [])
 
         location = SanatoriumLocation.objects.create(**location_data)
+        address = f"{location.city}, {location.country}".strip(", ") or ""
         try:
             sanatorium = Sanatorium.objects.create(
                 location=location,
                 partner=request.user,
+                address=address,
                 **validated_data,
             )
         except IntegrityError as exc:
@@ -475,7 +478,8 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
                 }
             )
         sanatorium.specializations.set(specializations)
-        sanatorium.treatments.set(treatments)
+        for treatment in treatments:
+            SanatoriumTreatment.objects.create(sanatorium=sanatorium, treatment=treatment)
         return sanatorium
 
 
