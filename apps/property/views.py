@@ -997,10 +997,41 @@ class PropertyRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
 
     def get_object(self):
         property_id = self.kwargs.get("property_id")
+        user = getattr(self.request, "user", None)
 
-        q_filter = Q(property__guid=property_id, property__is_verified=True)
-        if isinstance(self.request.user, Partner):
-            q_filter &= Q(property__partner=self.request.user)
+        # Public access: only verified properties.
+        # Partner access: partner can access their own properties (verified + unverified).
+        property_qs = Property.objects.all()
+        if isinstance(user, Partner):
+            property_qs = property_qs.filter(guid=property_id, partner=user)
+        else:
+            property_qs = property_qs.filter(guid=property_id, is_verified=True)
+
+        prop = (
+            property_qs.select_related(
+                "property_room",
+                "property_location",
+            )
+            .prefetch_related(
+                "property_price",
+                "property_images",
+                "property_services",
+            )
+            .first()
+        )
+        if not prop:
+            raise NotFound(_("Property not found"))
+
+        # Some legacy rows may exist without PropertyDetail; create an empty detail to avoid 404
+        # when the property itself is visible in list endpoints.
+        PropertyDetail.objects.get_or_create(
+            property=prop,
+            defaults={
+                "description_en": "",
+                "description_ru": "",
+                "description_uz": "",
+            },
+        )
 
         property_detail = (
             PropertyDetail.objects.select_related(
@@ -1013,12 +1044,9 @@ class PropertyRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
                 "property__property_images",
                 "property__property_services",
             )
-            .filter(q_filter)
+            .filter(property=prop)
             .first()
         )
-
-        if not property_detail:
-            raise NotFound(_("Property not found"))
 
         self.check_object_permissions(self.request, property_detail)
         return property_detail
