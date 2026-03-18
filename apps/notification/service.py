@@ -75,7 +75,7 @@ class FCMService:
                 len(tokens),
                 sorted(normalized_data.keys()),
             )
-            raise
+            return None
 
         invalid_tokens: list[str] = []
         for idx, send_response in enumerate(response.responses):

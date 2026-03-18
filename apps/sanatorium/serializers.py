@@ -1,7 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db import transaction, models
+from django.db import IntegrityError, transaction, models
 from django.db.models import Avg
 from django.utils.translation import gettext_lazy as _
 
@@ -428,6 +428,21 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
             "check_out_time",
         ]
 
+    duplicate_title_message = _(
+        "A sanatorium with this title already exists. Please choose a different title."
+    )
+
+    @staticmethod
+    def _extract_constraint_name(exc):
+        cause = getattr(exc, "__cause__", None)
+        diag = getattr(cause, "diag", None)
+        return getattr(diag, "constraint_name", None)
+
+    def validate_title(self, value):
+        if Sanatorium.objects.filter(title=value, is_archived=False).exists():
+            raise serializers.ValidationError(self.duplicate_title_message)
+        return value
+
     @transaction.atomic
     def create(self, validated_data):
         request = self.context["request"]
@@ -436,11 +451,9 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
         treatments = validated_data.pop("treatments", [])
 
         location = SanatoriumLocation.objects.create(**location_data)
-        address = f"{location.city}, {location.country}".strip(", ") or ""
         sanatorium = Sanatorium.objects.create(
             location=location,
             partner=request.user,
-            address=address,
             **validated_data,
         )
         sanatorium.specializations.set(specializations)

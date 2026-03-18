@@ -1127,6 +1127,37 @@ class PartnerEndpointTests(SanatoriumTestMixin, TestCase):
         resp = self.api.post("/api/sanatorium/partner/", data={})
         self.assertIn(resp.status_code, [401, 403])
 
+    def test_partner_create_duplicate_title_returns_400(self):
+        partner = self.make_partner(phone_number="+998901234568")
+        self.make_sanatorium(partner=partner, title="Test Sanatoriya")
+
+        self.api.force_authenticate(user=partner)
+        payload = {
+            "title": "Test Sanatoriya",
+            "description_en": "En",
+            "description_ru": "Ru",
+            "description_uz": "Uz",
+            "location": {
+                "latitude": "41.31108100000000",
+                "longitude": "69.24056200000000",
+                "country": "Uzbekistan",
+                "city": "Tashkent",
+            },
+            "specializations": [],
+            "treatments": [],
+            "check_in_time": "12:00:00",
+            "check_out_time": "10:00:00",
+        }
+
+        resp = self.api.post("/api/sanatorium/partner/", data=payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("errors", resp.data)
+        self.assertEqual(
+            resp.data["errors"][0]["detail"],
+            "A sanatorium with this title already exists. Please choose a different title.",
+        )
+        self.assertEqual(resp.data["errors"][0]["field"], "title")
+
 
 class ClientBookingEndpointTests(SanatoriumTestMixin, TestCase):
     """Test client booking endpoints require authentication."""
