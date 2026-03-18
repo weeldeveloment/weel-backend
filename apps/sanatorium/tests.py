@@ -23,6 +23,7 @@ from .models import (
     RoomAmenity,
     Sanatorium,
     SanatoriumLocation,
+    SanatoriumTreatment,
     SanatoriumImage,
     SanatoriumRoom,
     SanatoriumRoomPrice,
@@ -277,7 +278,8 @@ class SanatoriumModelTests(SanatoriumTestMixin, TestCase):
         san = self.make_sanatorium()
         t1 = self.make_treatment(title_en="Hydrotherapy")
         t2 = self.make_treatment(title_en="Physiotherapy")
-        san.treatments.set([t1, t2])
+        SanatoriumTreatment.objects.create(sanatorium=san, treatment=t1)
+        SanatoriumTreatment.objects.create(sanatorium=san, treatment=t2)
         self.assertEqual(san.treatments.count(), 2)
 
 

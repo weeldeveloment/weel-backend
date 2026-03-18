@@ -2,6 +2,17 @@ from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
 from .models.clients import Client, ClientDevice
+
+
+class OTPCodeFieldAliasMixin:
+    """Accept both otp_code and otp-code in request body."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            if "otp-code" in data and "otp_code" not in data:
+                data["otp_code"] = data.pop("otp-code")
+        return super().to_internal_value(data)
 from .models.partners import Partner, PartnerDevice, PartnerDocument, DocumentType
 from .models.logs import SmsPurpose
 from .services import OTPRedisService, PasswordService
@@ -18,7 +29,7 @@ class UserPhoneNumberSerializer(serializers.Serializer):
         return value
 
 
-class ClientOTPLoginVerifySerializer(serializers.Serializer):
+class ClientOTPLoginVerifySerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
     phone_number = serializers.CharField(required=True)
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
@@ -70,7 +81,7 @@ class ClientRegisterSerializer(serializers.Serializer):
         return value
 
 
-class ClientOTPRegistrationVerifySerializer(serializers.Serializer):
+class ClientOTPRegistrationVerifySerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
     phone_number = serializers.CharField(required=True)
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
@@ -149,7 +160,7 @@ class ClientProfileSerializer(serializers.ModelSerializer):
 #         return attrs
 
 
-class PartnerOTPLoginSerializer(serializers.Serializer):
+class PartnerOTPLoginSerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
     phone_number = serializers.CharField(required=True)
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
@@ -256,7 +267,7 @@ class PartnerOTPRegisterSerializer(serializers.Serializer):
     #     return value
 
 
-class PartnerOTPRegisterVerifySerializer(serializers.Serializer):
+class PartnerOTPRegisterVerifySerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
     phone_number = serializers.CharField(required=True)
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(

@@ -129,7 +129,7 @@ class SanatoriumAdmin(ModelAdmin):
     list_filter = ["verification_status", "is_verified", "created_at"]
     search_fields = ["title"]
     inlines = [SanatoriumImageInline]
-    filter_horizontal = ["specializations", "treatments"]
+    filter_horizontal = ["specializations"]
 
 
 # ──────────────────────────────────────────────
