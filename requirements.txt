@@ -17,7 +17,6 @@ firebase_admin==7.2.0
 python-json-logger==4.0.0
 django-prometheus==2.4.1
 daphne==4.2.1
-unfold==1.2.4
 django-unfold==0.85.0
 channels==4.3.2
 drf-yasg==1.21.15
@@ -28,3 +27,4 @@ init-data-py==0.2.7
 python-telegram-bot==22.7
 django-request-logging==0.7.5
 django-storages==1.14.6
+boto3==1.35.99
