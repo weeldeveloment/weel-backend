@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_APP")
 
+# If legacy tables are missing in production, we fallback to norm storage.
+# Avoid spamming logs on every device registration attempt.
+_clientdevice_table_missing_logged = False
+
 
 class EskizService:
     ESKIZ_TOKEN_KEY = "eskiz_service_token"
@@ -485,6 +489,7 @@ class ClientDeviceService:
         fcm_token: str,
         device_type: str,
     ):
+        global _clientdevice_table_missing_logged
         if not fcm_token:
             logger.warning(
                 "Client device registration skipped: empty token. client_id=%s device_type=%s",
@@ -550,10 +555,12 @@ class ClientDeviceService:
         except ProgrammingError as exc:
             # If legacy table is missing in production, fallback to norm tables automatically.
             if 'relation "client_devices" does not exist' in str(exc) or 'relation "users_clientdevice" does not exist' in str(exc):
-                logger.error(
-                    "ClientDevice table is missing, falling back to norm storage.",
-                    extra={"client_id": getattr(client, "id", None)},
-                )
+                if not _clientdevice_table_missing_logged:
+                    _clientdevice_table_missing_logged = True
+                    logger.warning(
+                        "ClientDevice legacy table is missing; using norm storage fallback.",
+                        extra={"client_id": getattr(client, "id", None)},
+                    )
                 from norm_store.sync import ensure_norm_customer
                 from norm_store.models import NormClientDevice
 

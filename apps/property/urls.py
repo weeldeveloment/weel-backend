@@ -79,6 +79,11 @@ urlpatterns = [
     ),
     path("partner/properties/", PartnerPropertyListView.as_view(), name="partner-property-list"),
     path(
+        "properties/<uuid:property_id>",
+        PropertyRetrieveUpdateDestroyView.as_view(),
+        name="property-retrieve-update-destroy-no-slash",
+    ),
+    path(
         "properties/<uuid:property_id>/",
         PropertyRetrieveUpdateDestroyView.as_view(),
         name="property-retrieve-update-destroy",
