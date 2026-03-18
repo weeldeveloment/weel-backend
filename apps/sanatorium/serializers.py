@@ -451,11 +451,32 @@ class SanatoriumCreateSerializer(serializers.ModelSerializer):
         treatments = validated_data.pop("treatments", [])
 
         location = SanatoriumLocation.objects.create(**location_data)
-        sanatorium = Sanatorium.objects.create(
-            location=location,
-            partner=request.user,
-            **validated_data,
-        )
+        address = f"{location.city}, {location.country}".strip(", ") or ""
+        try:
+            sanatorium = Sanatorium.objects.create(
+                location=location,
+                partner=request.user,
+                address=address,
+                **validated_data,
+            )
+        except IntegrityError as exc:
+            constraint_name = self._extract_constraint_name(exc)
+            title = validated_data.get("title")
+
+            if constraint_name == "unique_active_sanatorium_title" or (
+                title
+                and Sanatorium.objects.filter(title=title, is_archived=False).exists()
+            ):
+                raise serializers.ValidationError(
+                    {"title": self.duplicate_title_message}
+                )
+            raise serializers.ValidationError(
+                {
+                    "detail": _(
+                        "Could not create sanatorium. Check whether the title is unique and try again."
+                    )
+                }
+            )
         sanatorium.specializations.set(specializations)
         for treatment in treatments:
             SanatoriumTreatment.objects.create(sanatorium=sanatorium, treatment=treatment)
