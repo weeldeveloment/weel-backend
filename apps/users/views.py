@@ -1,5 +1,6 @@
 import logging
 from django.db import transaction
+from django.db import connection
 from django.db.utils import ProgrammingError, OperationalError
 
 from rest_framework.views import APIView
@@ -384,20 +385,35 @@ def deactivate_account(user, refresh_token=None):
         except TokenError:
             pass
 
-    with transaction.atomic():
+    try:
+        if isinstance(user, Client):
+            ClientDevice.objects.filter(client=user, is_active=True).update(is_active=False)
+            ClientSession.objects.filter(client=user).delete()
+        elif isinstance(user, Partner):
+            PartnerDevice.objects.filter(partner=user, is_active=True).update(is_active=False)
+            PartnerSession.objects.filter(partner=user).delete()
+            PartnerTelegramUser.objects.filter(partner=user, is_active=True).update(is_active=False)
+    except (ProgrammingError, OperationalError):
+        logger.exception(
+            "Skipping related cleanup during account deactivation due to missing table(s)."
+        )
+
+    if isinstance(user, Partner):
+        # Partner account deletion must be permanent.
         try:
-            if isinstance(user, Client):
-                ClientDevice.objects.filter(client=user, is_active=True).update(is_active=False)
-                ClientSession.objects.filter(client=user).delete()
-            elif isinstance(user, Partner):
-                PartnerDevice.objects.filter(partner=user, is_active=True).update(is_active=False)
-                PartnerSession.objects.filter(partner=user).delete()
-                PartnerTelegramUser.objects.filter(partner=user, is_active=True).update(is_active=False)
+            with transaction.atomic():
+                user.delete()
         except (ProgrammingError, OperationalError):
             logger.exception(
-                "Skipping related cleanup during account deactivation due to missing table(s)."
+                "ORM partner deletion failed due to schema mismatch. Falling back to raw SQL delete."
             )
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM users_partner WHERE id = %s", [user.id])
+        return
 
+    # Client keeps deactivation behavior.
+    with transaction.atomic():
         user.is_active = False
         user.save(update_fields=["is_active"])
 

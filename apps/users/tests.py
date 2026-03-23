@@ -412,11 +412,8 @@ class PartnerProfileDeleteViewTests(TestCase):
 
         response = api.delete("/api/user/partner/profile/", data={}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        partner_user.refresh_from_db()
-        device.refresh_from_db()
-        self.assertFalse(partner_user.is_active)
-        self.assertFalse(device.is_active)
+        self.assertFalse(Partner.objects.filter(id=partner_user.id).exists())
+        self.assertFalse(PartnerDevice.objects.filter(id=device.id).exists())
         self.assertFalse(PartnerSession.objects.filter(partner=partner_user).exists())
         self.assertFalse(
             PartnerTelegramUser.objects.filter(partner=partner_user, is_active=True).exists()
@@ -475,7 +472,7 @@ class OwnAccountViewTests(TestCase):
         client_user.refresh_from_db()
         self.assertFalse(client_user.is_active)
 
-    def test_own_account_delete_as_partner_deactivates(self):
+    def test_own_account_delete_as_partner_removes_partner(self):
         partner_user = make_partner(first_name="ToDeactivate", last_name="Partner")
         access = AccessToken()
         access[TokenMetadata.TOKEN_SUBJECT] = str(partner_user.guid)
@@ -486,8 +483,7 @@ class OwnAccountViewTests(TestCase):
         api.credentials(HTTP_AUTHORIZATION=f"Bearer {str(access)}")
         response = api.delete("/api/user/account/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        partner_user.refresh_from_db()
-        self.assertFalse(partner_user.is_active)
+        self.assertFalse(Partner.objects.filter(id=partner_user.id).exists())
 
 
 # ──────────────────────────────────────────────
