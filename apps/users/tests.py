@@ -371,6 +371,52 @@ class ClientProfileViewTests(TestCase):
         self.assertEqual(response.data["last_name"], "User")
 
 
+class PartnerProfileDeleteViewTests(TestCase):
+    def test_partner_profile_delete_unauthenticated_returns_401_or_403(self):
+        api = APIClient()
+        response = api.delete("/api/user/partner/profile/")
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_partner_profile_delete_deactivates_partner_and_cleans_sessions_devices(self):
+        partner_user = make_partner(first_name="Delete", last_name="Me")
+        device = PartnerDevice.objects.create(
+            partner=partner_user,
+            fcm_token=f"token_{uuid.uuid4().hex}",
+            device_type=PartnerDevice.PartnerDeviceType.ANDROID,
+            is_active=True,
+        )
+        PartnerSession.objects.create(
+            partner=partner_user,
+            user_agent="Test",
+            last_ip="127.0.0.1",
+        )
+        PartnerTelegramUser.objects.create(
+            partner=partner_user,
+            telegram_user_id=10_000 + (uuid.uuid4().int % 1_000_000),
+            is_active=True,
+        )
+
+        access = AccessToken()
+        access[TokenMetadata.TOKEN_SUBJECT] = str(partner_user.guid)
+        access[TokenMetadata.TOKEN_ISSUER] = getattr(settings, "JWT_ISSUER", "weel")
+        access[TokenMetadata.TOKEN_USER_TYPE] = "partner"
+        access[TokenMetadata.TOKEN_TYPE_CLAIM] = "access"
+        api = APIClient()
+        api.credentials(HTTP_AUTHORIZATION=f"Bearer {str(access)}")
+
+        response = api.delete("/api/user/partner/profile/", data={}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        partner_user.refresh_from_db()
+        device.refresh_from_db()
+        self.assertFalse(partner_user.is_active)
+        self.assertFalse(device.is_active)
+        self.assertFalse(PartnerSession.objects.filter(partner=partner_user).exists())
+        self.assertFalse(
+            PartnerTelegramUser.objects.filter(partner=partner_user, is_active=True).exists()
+        )
+
+
 class ClientLogoutViewTests(TestCase):
     def test_logout_without_token_returns_200(self):
         api = APIClient()

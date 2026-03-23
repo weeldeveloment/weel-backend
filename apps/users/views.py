@@ -1,4 +1,5 @@
 import logging
+from django.db import transaction
 
 from rest_framework.views import APIView
 from rest_framework import status, generics, viewsets
@@ -33,7 +34,8 @@ from .serializers import (
 )
 
 from .models.clients import Client
-from .models.partners import Partner
+from .models.clients import ClientDevice, ClientSession
+from .models.partners import Partner, PartnerDevice, PartnerSession, PartnerTelegramUser
 from .models.logs import SmsPurpose
 from .services import (
     OTPRedisService,
@@ -362,6 +364,36 @@ logout_request_body = openapi.Schema(
     },
     required=["refresh"],
 )
+
+optional_refresh_request_body = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "refresh": openapi.Schema(
+            type=openapi.TYPE_STRING, description="Refresh token to blacklist"
+        )
+    },
+)
+
+
+def deactivate_account(user, refresh_token=None):
+    if refresh_token:
+        try:
+            token = CustomRefreshToken(refresh_token)
+            token.blacklist()
+        except TokenError:
+            pass
+
+    with transaction.atomic():
+        if isinstance(user, Client):
+            ClientDevice.objects.filter(client=user, is_active=True).update(is_active=False)
+            ClientSession.objects.filter(client=user).delete()
+        elif isinstance(user, Partner):
+            PartnerDevice.objects.filter(partner=user, is_active=True).update(is_active=False)
+            PartnerSession.objects.filter(partner=user).delete()
+            PartnerTelegramUser.objects.filter(partner=user, is_active=True).update(is_active=False)
+
+        user.is_active = False
+        user.save(update_fields=["is_active"])
 
 
 class ClientLogoutView(APIView):
@@ -827,6 +859,19 @@ class PartnerProfileView(APIView):
         serializer = PartnerProfileSerializer(partner)
         return Response(serializer.data)
 
+    @swagger_auto_schema(
+        tags=["Auth - Profile"],
+        operation_summary="Delete own partner profile",
+        request_body=optional_refresh_request_body,
+    )
+    def delete(self, request):
+        refresh_token = request.data.get("refresh")
+        deactivate_account(request.user, refresh_token=refresh_token)
+        return Response(
+            {"detail": _("Account has been deactivated.")},
+            status=status.HTTP_200_OK,
+        )
+
 
 class OwnAccountView(APIView):
     """
@@ -839,11 +884,11 @@ class OwnAccountView(APIView):
     @swagger_auto_schema(
         tags=["Auth - Profile"],
         operation_summary="Delete own account (Client or Partner)",
+        request_body=optional_refresh_request_body,
     )
     def delete(self, request):
-        user = request.user
-        user.is_active = False
-        user.save(update_fields=["is_active"])
+        refresh_token = request.data.get("refresh")
+        deactivate_account(request.user, refresh_token=refresh_token)
         return Response(
             {"detail": _("Account has been deactivated.")},
             status=status.HTTP_200_OK,
