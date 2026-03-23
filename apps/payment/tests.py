@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 from django.core.cache import cache
 from django.db import IntegrityError
+from django.db.utils import ProgrammingError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -183,6 +184,20 @@ class UpdateExchangeRateTaskTests(TestCase):
 
         record = ExchangeRate.objects.get(currency="USD", date=timezone.localdate())
         self.assertEqual(record.rate, Decimal("12770.55"))
+
+    @patch("payment.tasks.ExchangeRate.objects.update_or_create")
+    @patch("payment.tasks.requests.get")
+    def test_update_exchange_rate_handles_missing_table_gracefully(self, mock_get, mock_update_or_create):
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"result": "success", "rates": {"UZS": 12892.04}}
+        mock_get.return_value = mock_response
+        mock_update_or_create.side_effect = ProgrammingError("relation does not exist")
+
+        # Should not raise; task should only log and continue.
+        update_exchange_rate()
+
+        self.assertEqual(cache.get("usd_to_uzs_rate"), Decimal("12892.04"))
 
 
 # ──────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import logging
 from django.db import transaction
+from django.db.utils import ProgrammingError, OperationalError
 
 from rest_framework.views import APIView
 from rest_framework import status, generics, viewsets
@@ -384,13 +385,18 @@ def deactivate_account(user, refresh_token=None):
             pass
 
     with transaction.atomic():
-        if isinstance(user, Client):
-            ClientDevice.objects.filter(client=user, is_active=True).update(is_active=False)
-            ClientSession.objects.filter(client=user).delete()
-        elif isinstance(user, Partner):
-            PartnerDevice.objects.filter(partner=user, is_active=True).update(is_active=False)
-            PartnerSession.objects.filter(partner=user).delete()
-            PartnerTelegramUser.objects.filter(partner=user, is_active=True).update(is_active=False)
+        try:
+            if isinstance(user, Client):
+                ClientDevice.objects.filter(client=user, is_active=True).update(is_active=False)
+                ClientSession.objects.filter(client=user).delete()
+            elif isinstance(user, Partner):
+                PartnerDevice.objects.filter(partner=user, is_active=True).update(is_active=False)
+                PartnerSession.objects.filter(partner=user).delete()
+                PartnerTelegramUser.objects.filter(partner=user, is_active=True).update(is_active=False)
+        except (ProgrammingError, OperationalError):
+            logger.exception(
+                "Skipping related cleanup during account deactivation due to missing table(s)."
+            )
 
         user.is_active = False
         user.save(update_fields=["is_active"])

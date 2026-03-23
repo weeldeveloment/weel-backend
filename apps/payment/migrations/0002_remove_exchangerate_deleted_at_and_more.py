@@ -11,19 +11,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunSQL(
-            sql="""
-            DELETE FROM payment_exchangerate WHERE deleted_at IS NOT NULL;
-            DELETE FROM payment_plumtransaction WHERE deleted_at IS NOT NULL;
-            """,
-            reverse_sql=migrations.RunSQL.noop,
-        ),
-        migrations.RemoveField(
-            model_name='exchangerate',
-            name='deleted_at',
-        ),
-        migrations.RemoveField(
-            model_name='plumtransaction',
-            name='deleted_at',
-        ),
+        # NOTE:
+        # Current payment 0001_initial does not define deleted_at columns on these tables.
+        # Keep this migration as an explicit no-op to preserve migration numbering across environments.
+        migrations.RunSQL(sql=migrations.RunSQL.noop, reverse_sql=migrations.RunSQL.noop),
     ]

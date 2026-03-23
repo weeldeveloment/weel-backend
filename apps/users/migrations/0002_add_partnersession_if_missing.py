@@ -5,7 +5,10 @@ from django.db import migrations
 
 def create_partnersession_table(apps, schema_editor):
     """Create users_partnersession if it doesn't exist (e.g. migration was faked or table dropped)."""
-    from django.db import connection
+    connection = schema_editor.connection
+    if connection.vendor != "postgresql":
+        return
+
     with connection.cursor() as cursor:
         cursor.execute("""
             SELECT 1 FROM information_schema.tables

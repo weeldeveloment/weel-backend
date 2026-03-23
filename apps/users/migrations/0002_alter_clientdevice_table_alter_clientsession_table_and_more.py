@@ -10,20 +10,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterModelTable(
-            name='clientdevice',
-            table='norm_client_devices',
-        ),
-        migrations.AlterModelTable(
-            name='clientsession',
-            table='norm_client_sessions',
-        ),
-        migrations.AlterModelTable(
-            name='partnerdevice',
-            table='norm_partner_devices',
-        ),
-        migrations.AlterModelTable(
-            name='partnersession',
-            table='norm_partner_sessions',
-        ),
+        # Keep as a no-op to avoid table-name divergence from model Meta.db_table.
+        migrations.RunSQL(sql=migrations.RunSQL.noop, reverse_sql=migrations.RunSQL.noop),
     ]

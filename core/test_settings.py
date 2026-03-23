@@ -20,3 +20,11 @@ DEBUG_TOOLBAR_CONFIG = {
 
 # Use faster password hasher for tests
 AUTH_PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
+# Use in-memory cache for tests (avoid external Redis dependency).
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "test-cache",
+    }
+}

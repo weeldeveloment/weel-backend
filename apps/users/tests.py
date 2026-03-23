@@ -14,7 +14,13 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from .models import Client, Partner
 from .models.clients import ClientDevice, ClientSession
-from .models.partners import PartnerSession, PartnerDocument, DocumentType, PartnerTelegramUser
+from .models.partners import (
+    PartnerDevice,
+    PartnerSession,
+    PartnerDocument,
+    DocumentType,
+    PartnerTelegramUser,
+)
 from .models.logs import SmsLog, SmsPurpose
 from .tokens import (
     TokenMetadata,

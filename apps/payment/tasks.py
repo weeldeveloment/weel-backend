@@ -1,13 +1,17 @@
 from datetime import date
 from decimal import Decimal
 from typing import Any
+import logging
 
 from celery import shared_task
 from django.core.cache import cache
+from django.db import ProgrammingError, OperationalError
 import requests
 
 from core import settings
 from .models import ExchangeRate
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_usd_to_uzs_rate(payload: Any) -> Decimal:
@@ -39,18 +43,25 @@ def update_exchange_rate():
     response.raise_for_status()
     rate = _extract_usd_to_uzs_rate(response.json())
 
-    if getattr(settings, "USE_NORM_DATASTORE", False):
-        from norm_store.models import NormExchangeRate
+    try:
+        if getattr(settings, "USE_NORM_DATASTORE", False):
+            from norm_store.models import NormExchangeRate
 
-        NormExchangeRate.objects.update_or_create(
-            currency="USD",
-            date=date.today(),
-            defaults={"rate": rate},
+            NormExchangeRate.objects.update_or_create(
+                currency="USD",
+                date=date.today(),
+                defaults={"rate": rate},
+            )
+        else:
+            ExchangeRate.objects.update_or_create(
+                currency="USD",
+                date=date.today(),
+                defaults={"rate": rate},
+            )
+    except (ProgrammingError, OperationalError):
+        logger.exception(
+            "Skipping exchange-rate DB persistence because required table is missing. "
+            "Run migrations for payment (and norm_store if enabled)."
         )
-    else:
-        ExchangeRate.objects.update_or_create(
-            currency="USD",
-            date=date.today(),
-            defaults={"rate": rate},
-        )
+
     cache.set("usd_to_uzs_rate", rate, timeout=86400)  # 86400 - 24 hours
