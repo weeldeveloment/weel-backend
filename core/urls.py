@@ -41,6 +41,11 @@ schema_view = get_schema_view(
     permission_classes=[permissions.AllowAny],
 )
 
+try:
+    import core.admin_mods
+except ImportError:
+    pass
+
 urlpatterns = [
     path("", include("django_prometheus.urls")),
     path("i18n/", include("django.conf.urls.i18n")),
@@ -70,3 +75,4 @@ if not settings.USE_MINIO:
             {"document_root": settings.MEDIA_ROOT},
         )
     ]
+

@@ -186,7 +186,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def save_message(self, sender_type, sender_id, receiver_id, receiver_type, content):
         try:
             from .models import Conversation, ChatMessage
-            from apps.notification.service import NotificationService
+            from notification.service import NotificationService
 
             if sender_type == 'admin':
                 admin = User.objects.filter(id=sender_id, is_active=True).first()

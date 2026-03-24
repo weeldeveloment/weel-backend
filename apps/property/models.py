@@ -406,6 +406,15 @@ class Apartment(Property):
         verbose_name_plural = _("Apartments")
 
 
+class Cottages(Property):
+    """Proxy model: admin panelda faqat Cottages tipidagi propertylarni ko'rsatish uchun."""
+
+    class Meta:
+        proxy = True
+        verbose_name = _("Cottage")
+        verbose_name_plural = _("Cottages")
+
+
 class PropertyPrice(HardDeleteBaseModel):
     property = models.ForeignKey(
         Property,

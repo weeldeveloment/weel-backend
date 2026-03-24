@@ -185,9 +185,12 @@ class UpdateExchangeRateTaskTests(TestCase):
         record = ExchangeRate.objects.get(currency="USD", date=timezone.localdate())
         self.assertEqual(record.rate, Decimal("12770.55"))
 
+    @patch("payment.tasks.logger.exception")
     @patch("payment.tasks.ExchangeRate.objects.update_or_create")
     @patch("payment.tasks.requests.get")
-    def test_update_exchange_rate_handles_missing_table_gracefully(self, mock_get, mock_update_or_create):
+    def test_update_exchange_rate_handles_missing_table_gracefully(
+        self, mock_get, mock_update_or_create, mock_log_exception
+    ):
         mock_response = Mock()
         mock_response.raise_for_status = Mock()
         mock_response.json.return_value = {"result": "success", "rates": {"UZS": 12892.04}}
@@ -198,6 +201,7 @@ class UpdateExchangeRateTaskTests(TestCase):
         update_exchange_rate()
 
         self.assertEqual(cache.get("usd_to_uzs_rate"), Decimal("12892.04"))
+        mock_log_exception.assert_called_once()
 
 
 # ──────────────────────────────────────────────

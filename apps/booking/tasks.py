@@ -104,8 +104,8 @@ def send_pending_booking_payment_reminders(self):
     If they do not pay in time, the property will be released and available for others.
     Sends at ~24 min, ~6 min, ~1 min left (each stage once per booking).
     """
-    from apps.notification.models import Notification
-    from apps.notification.service import NotificationService
+    from notification.models import Notification
+    from notification.service import NotificationService
 
     now = timezone.now()
     deadline_delta = timedelta(minutes=PAYMENT_DEADLINE_MINUTES)

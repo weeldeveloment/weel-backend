@@ -854,7 +854,7 @@ class _PropertyTypeListCreateMixin:
         if not self.property_type_title_en:
             return None
         return (
-            PropertyType.objects.filter(title_en=self.property_type_title_en)
+            PropertyType.objects.filter(title_en__iexact=self.property_type_title_en)
             .only("guid", "id")
             .first()
         )
@@ -919,6 +919,33 @@ class ApartmentPropertyListCreateView(_PropertyTypeListCreateMixin, PropertyList
             "- `entrance_number`\n"
             "- `floor_number`\n"
             "- `pass_code`\n"
+        ),
+        request_body=PropertyCreateSerializer,
+        responses={
+            status.HTTP_201_CREATED: openapi.Response(
+                "Success",
+                schema=openapi.Schema(type=openapi.TYPE_OBJECT),
+                examples={
+                    "application/json": {
+                        "detail": "Property has been created successfully, please wait while we verify it",
+                        "status_code": 201,
+                    }
+                },
+            ),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+
+class CottagePropertyListCreateView(_PropertyTypeListCreateMixin, PropertyListCreateView):
+    property_type_title_en = "Cottages"
+
+    @swagger_auto_schema(
+        tags=["Property"],
+        operation_summary="Create a cottage property",
+        operation_description=(
+            "Cottages create endpoint. `property_type_id` is enforced as Cottages."
         ),
         request_body=PropertyCreateSerializer,
         responses={

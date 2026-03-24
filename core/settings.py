@@ -89,10 +89,10 @@ LOCAL_APPS = [
     "stories",
     "booking",
     "norm_store.apps.NormStoreConfig",
-    "apps.notification",
+    "notification",
     "bot",
     "sanatorium",
-    "apps.chat",
+    "chat",
     "apps.admin_auth",
 ]
 

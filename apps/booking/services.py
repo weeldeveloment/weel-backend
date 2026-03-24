@@ -18,8 +18,8 @@ from users.models.clients import Client
 from payment.models import PlumTransaction, PlumTransactionStatus
 from payment.services import PlumAPIService, PlumAPIError
 from payment.exchange_rate import to_uzs, to_usd
-from apps.notification.models import Notification
-from apps.notification.service import NotificationService
+from notification.models import Notification
+from notification.service import NotificationService
 
 from users.tasks import send_partner_telegram_msg
 
