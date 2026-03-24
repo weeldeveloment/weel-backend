@@ -398,24 +398,21 @@ def deactivate_account(user, refresh_token=None):
             "Skipping related cleanup during account deactivation due to missing table(s)."
         )
 
-    if isinstance(user, Partner):
-        # Partner account deletion must be permanent.
+    if isinstance(user, (Partner, Client)):
+        table_name = "users_partner" if isinstance(user, Partner) else "users_client"
+        user_type = "partner" if isinstance(user, Partner) else "client"
         try:
             with transaction.atomic():
                 user.delete()
         except (ProgrammingError, OperationalError):
             logger.exception(
-                "ORM partner deletion failed due to schema mismatch. Falling back to raw SQL delete."
+                "ORM %s deletion failed due to schema mismatch. Falling back to raw SQL delete.",
+                user_type,
             )
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute("DELETE FROM users_partner WHERE id = %s", [user.id])
+                    cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", [user.id])
         return
-
-    # Client keeps deactivation behavior.
-    with transaction.atomic():
-        user.is_active = False
-        user.save(update_fields=["is_active"])
 
 
 class ClientLogoutView(APIView):
@@ -883,14 +880,31 @@ class PartnerProfileView(APIView):
 
     @swagger_auto_schema(
         tags=["Auth - Profile"],
-        operation_summary="Delete own partner profile",
+        operation_summary="Permanently delete own partner profile",
+        operation_description=(
+            "Hard delete partner account and related records. "
+            "This action is irreversible."
+        ),
         request_body=optional_refresh_request_body,
+        responses={
+            200: openapi.Response(
+                description="Partner account permanently deleted",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "detail": openapi.Schema(type=openapi.TYPE_STRING),
+                    },
+                ),
+            ),
+            401: "Unauthorized",
+            403: "Forbidden",
+        },
     )
     def delete(self, request):
         refresh_token = request.data.get("refresh")
         deactivate_account(request.user, refresh_token=refresh_token)
         return Response(
-            {"detail": _("Account has been deactivated.")},
+            {"detail": _("Account has been deleted.")},
             status=status.HTTP_200_OK,
         )
 
@@ -905,14 +919,31 @@ class OwnAccountView(APIView):
 
     @swagger_auto_schema(
         tags=["Auth - Profile"],
-        operation_summary="Delete own account (Client or Partner)",
+        operation_summary="Permanently delete own account (Client or Partner)",
+        operation_description=(
+            "Hard delete the authenticated client or partner account and related records. "
+            "This action is irreversible."
+        ),
         request_body=optional_refresh_request_body,
+        responses={
+            200: openapi.Response(
+                description="Account permanently deleted",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "detail": openapi.Schema(type=openapi.TYPE_STRING),
+                    },
+                ),
+            ),
+            401: "Unauthorized",
+            403: "Forbidden",
+        },
     )
     def delete(self, request):
         refresh_token = request.data.get("refresh")
         deactivate_account(request.user, refresh_token=refresh_token)
         return Response(
-            {"detail": _("Account has been deactivated.")},
+            {"detail": _("Account has been deleted.")},
             status=status.HTTP_200_OK,
         )
 

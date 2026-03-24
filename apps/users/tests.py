@@ -458,7 +458,7 @@ class OwnAccountViewTests(TestCase):
         response = api.delete("/api/user/account/")
         self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
-    def test_own_account_delete_as_client_deactivates(self):
+    def test_own_account_delete_as_client_removes_client(self):
         client_user = make_client(first_name="ToDeactivate", last_name="Client")
         access = AccessToken()
         access[TokenMetadata.TOKEN_SUBJECT] = str(client_user.guid)
@@ -469,8 +469,7 @@ class OwnAccountViewTests(TestCase):
         api.credentials(HTTP_AUTHORIZATION=f"Bearer {str(access)}")
         response = api.delete("/api/user/account/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        client_user.refresh_from_db()
-        self.assertFalse(client_user.is_active)
+        self.assertFalse(Client.objects.filter(id=client_user.id).exists())
 
     def test_own_account_delete_as_partner_removes_partner(self):
         partner_user = make_partner(first_name="ToDeactivate", last_name="Partner")
