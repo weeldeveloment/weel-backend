@@ -650,13 +650,13 @@ class PartnerDeviceService:
             )
             return partner_device
         except ProgrammingError as exc:
-            if 'relation "partner_devices" does not exist' in str(exc):
-                logger.error(
-                    "PartnerDevice table is missing. Run database migrations.",
-                    extra={"partner_id": getattr(partner, "id", None)},
-                )
-                return None
-            if 'relation "partner_devices" does not exist' in str(exc) or 'relation "users_partnerdevice" does not exist' in str(exc):
+            error_text = str(exc)
+            missing_partner_device_table = (
+                'relation "norm_partner_devices" does not exist' in error_text
+                or 'relation "partner_devices" does not exist' in error_text
+                or 'relation "users_partnerdevice" does not exist' in error_text
+            )
+            if missing_partner_device_table:
                 logger.error(
                     "PartnerDevice table is missing, falling back to norm storage.",
                     extra={"partner_id": getattr(partner, "id", None)},
