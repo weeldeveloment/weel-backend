@@ -4,10 +4,14 @@ import re
 from celery import Celery
 from celery.schedules import crontab
 from django.conf import settings
+from dotenv import find_dotenv, load_dotenv
 
 # from kombu import Queue, Exchange
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+# Celery CLI entrypoint can load this module before Django settings side effects.
+# Ensure .env values are present here too (e.g. REDIS_CONNECTION_STRING).
+load_dotenv(find_dotenv(), override=True)
 app = Celery("core")
 # app.config_from_object('django.conf:settings', namespace='CELERY')
 

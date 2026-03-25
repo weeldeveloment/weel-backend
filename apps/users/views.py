@@ -1,7 +1,7 @@
 import logging
 from django.db import transaction
 from django.db import connection
-from django.db.utils import ProgrammingError, OperationalError
+from django.db.utils import ProgrammingError, OperationalError, IntegrityError
 
 from rest_framework.views import APIView
 from rest_framework import status, generics, viewsets
@@ -404,15 +404,34 @@ def deactivate_account(user, refresh_token=None):
         try:
             with transaction.atomic():
                 user.delete()
+            return
         except (ProgrammingError, OperationalError):
             logger.exception(
                 "ORM %s deletion failed due to schema mismatch. Falling back to raw SQL delete.",
                 user_type,
             )
+        try:
             with transaction.atomic():
                 with connection.cursor() as cursor:
                     cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", [user.id])
-        return
+            return
+        except (ProgrammingError, OperationalError, IntegrityError):
+            logger.exception(
+                "Raw SQL %s deletion failed due to schema/constraint mismatch. Falling back to soft deactivation.",
+                user_type,
+            )
+            with transaction.atomic():
+                updates = {"is_active": False}
+                phone = getattr(user, "phone_number", None)
+                if phone is not None:
+                    guid_part = str(user.guid).replace("-", "")
+                    updates["phone_number"] = f"d{guid_part[:15]}"
+                if isinstance(user, Partner):
+                    guid_part = str(user.guid).replace("-", "")
+                    updates["username"] = f"deleted_{guid_part[:16]}"
+                    updates["email"] = None
+                type(user).objects.filter(id=user.id).update(**updates)
+            return
 
 
 class ClientLogoutView(APIView):
