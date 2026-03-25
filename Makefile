@@ -1,9 +1,6 @@
 PYTHON ?= venv/bin/python
 TEST_APPS = users shared payment property stories booking notification bot sanatorium chat admin_auth
 PYTHONWARNINGS ?= ignore::Warning:requests
-TEST_DB_SETTINGS ?= core.settings_test_db
-TEST_DB_CREATE_FLAGS ?= --drop
-TEST_DB_FLAGS ?= --keepdb
 
 run:
     # Run local server
@@ -17,15 +14,13 @@ superuser:
 
 # --- Test DB (asosiy baza ichida test_schema, asosiy ma'lumotlarga ta'sir yo'q) ---
 test-db-create:
-	command $(PYTHON) manage.py create_test_db $(TEST_DB_CREATE_FLAGS)
+	command $(PYTHON) manage.py create_test_db
 test-db-migrate: test-db-create
-	command $(PYTHON) manage.py migrate --settings=$(TEST_DB_SETTINGS)
+	command $(PYTHON) manage.py migrate --settings=core.settings_test_db
 test-db: test-db-migrate
 # test_schema da testlarni ishga tushiradi
 test: test-db-migrate
-	command $(PYTHON) manage.py test $(TEST_APPS) --settings=$(TEST_DB_SETTINGS) $(TEST_DB_FLAGS)
-# Eski odatdagi nom uchun alias
-test-cli: test
+	command $(PYTHON) manage.py test --settings=core.settings_test_db --keepdb
 # To'liq: schema + migrate + test
 test-all: test
 

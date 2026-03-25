@@ -27,7 +27,3 @@ _default_db["TEST"] = {"NAME": DATABASES["default"].get("NAME")}
 DATABASES = {
     "default": _default_db,
 }
-
-# Tests: do not require external Redis/Rabbit.
-CELERY_TASK_ALWAYS_EAGER = True
-CELERY_TASK_EAGER_PROPAGATES = True
