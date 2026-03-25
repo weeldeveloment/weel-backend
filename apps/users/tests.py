@@ -330,6 +330,7 @@ class PartnerProfileSerializerTests(TestCase):
         self.assertEqual(serializer.data["first_name"], "Jane")
         self.assertIn("id", serializer.data)
         self.assertIn("phone_number", serializer.data)
+        self.assertIn("created_at", serializer.data)
 
 
 class PartnerPassportUploadSerializerTests(TestCase):

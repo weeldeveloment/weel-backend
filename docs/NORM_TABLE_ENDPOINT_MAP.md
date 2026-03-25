@@ -100,6 +100,7 @@ Quyidagi jadvalda **qaysi endpoint qaysi norm jadvalga yoziladi / o‘qiladi** (
 | POST | `/api/property/properties/` | **Yaratish** (partner) |
 | GET/PATCH/DELETE | `/api/property/properties/<uuid>/` | Batafsil / tahrirlash / o‘chirish |
 | GET | `/api/property/properties/apartments/` | Apartamentlar |
+| GET | `/api/property/properties/cottages/` | Kottejlar |
 | GET | `/api/property/partner/properties/` | Partnerning obyektlari |
 | GET | `/api/property/regions/<id>/properties/` | Hudud bo‘yicha |
 | GET | `/api/property/properties/filter-by-link/` | Filter |

@@ -5,10 +5,10 @@ urlpatterns = [
     path("property/", include(("property.urls", "property"), "property")),
     path("story/", include(("stories.urls", "stories"), "stories")),
     path("booking/", include(("booking.urls", "booking"), "booking")),
-    path("notification/", include(("apps.notification.urls", "notification"), "notification")),
+    path("notification/", include(("notification.urls", "notification"), "notification")),
     path("bot/", include(("bot.urls", "bot"), "bot")),
     path("logs/", include(("shared.urls", "shared"), "shared")),
     path("sanatorium/", include(("sanatorium.urls", "sanatorium"), "sanatorium")),
-    path("chat/", include(("apps.chat.urls", "chat"), "chat")),
+    path("chat/", include(("chat.urls", "chat"), "chat")),
     path("admin-auth/", include(("apps.admin_auth.urls", "admin_auth"), "admin_auth")),
 ]

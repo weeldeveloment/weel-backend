@@ -61,11 +61,13 @@ class PartnerAdmin(ModelAdmin):
         "email",
         "is_email_verified",
         "is_active",
+        "created_at",
         "last_online_display",
     )
-    list_filter = ("is_active", "is_email_verified", HasPropertyFilter)
+    list_filter = ("is_active", "is_email_verified", "created_at", HasPropertyFilter)
     search_fields = ("username", "first_name", "last_name", "phone_number", "email")
-    ordering = ("id",)
+    ordering = ("-created_at",)
+    readonly_fields = ("created_at", "updated_at")
     inlines = [PartnerDocumentInline]
 
     # Unfold-specific options (these are optional customizations)

@@ -21,6 +21,8 @@ from property.serializers import (
 )
 from property.views import (
     PropertyListCreateView,
+    ApartmentPropertyListCreateView,
+    CottagePropertyListCreateView,
     PropertyTypeListView,
     PropertyServiceListView,
     PropertyRetrieveUpdateDestroyView,
@@ -48,6 +50,16 @@ class PropertyUrlTests(TestCase):
         match = resolve("/api/property/properties")
 
         self.assertIs(match.func.view_class, PropertyListCreateView)
+
+    def test_apartments_endpoint_resolves(self):
+        match = resolve("/api/property/properties/apartments/")
+
+        self.assertIs(match.func.view_class, ApartmentPropertyListCreateView)
+
+    def test_cottages_endpoint_resolves(self):
+        match = resolve("/api/property/properties/cottages/")
+
+        self.assertIs(match.func.view_class, CottagePropertyListCreateView)
 
 
 @override_settings(MEDIA_ROOT="/tmp/weel-test-media")

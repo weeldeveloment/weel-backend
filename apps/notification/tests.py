@@ -206,11 +206,15 @@ class FCMServiceTests(TestCase):
         self.assertIsNotNone(result)
         mock_send.assert_called_once()
 
+    @patch("notification.service.logger.exception")
     @patch("notification.service.messaging.send_each_for_multicast")
-    def test_send_to_tokens_returns_none_when_firebase_raises(self, mock_send):
+    def test_send_to_tokens_returns_none_when_firebase_raises(
+        self, mock_send, mock_log_exception
+    ):
         mock_send.side_effect = RuntimeError("bad auth")
         result = FCMService.send_to_tokens(tokens=["token1"], title="T", body="B")
         self.assertIsNone(result)
+        mock_log_exception.assert_called_once()
 
 
 # ──────────────────────────────────────────────
@@ -278,7 +282,7 @@ class SendBookingRemindersTaskTests(TestCase):
 
         from booking.models import Booking
         from booking.tests import BookingTestMixin
-        from apps.notification.tasks import send_booking_reminders
+        from notification.tasks import send_booking_reminders
 
         tomorrow = timezone.localdate() + timedelta(days=1)
         client = make_client()

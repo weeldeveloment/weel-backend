@@ -320,9 +320,4 @@ class PropertyFilter(filters.FilterSet):
         if total_guests <= 0:
             return queryset.none()
 
-        filtered = queryset.filter(property_room__guests__gte=total_guests)
-        # Agar mehmon soni bo‘yicha filter bo‘sh natija bersa, guests filterni qo‘llamaymiz
-        # (mahalla/sana bo‘yicha natija qaytadi, sig‘imni frontend ko‘rsatadi)
-        if not filtered.exists():
-            return queryset
-        return filtered
+        return queryset.filter(property_room__guests__gte=total_guests)

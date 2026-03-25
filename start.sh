@@ -8,7 +8,7 @@ if [ "${SKIP_MIGRATIONS:-}" = "true" ] || [ "${SKIP_MIGRATIONS:-}" = "1" ]; then
 	echo "Skipping migrations (SKIP_MIGRATIONS set)."
 else
 	echo "Running migrations..."
-	python manage.py migrate --noinput
+	python manage.py migrate --fake-initial --noinput
 fi
 
 echo "Creating test user (if not exists)..."

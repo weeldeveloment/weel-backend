@@ -5,6 +5,7 @@ from .views import (
     PropertyListCreateView,
     PropertyFilterByLinkView,
     ApartmentPropertyListCreateView,
+    CottagePropertyListCreateView,
     RegionPropertyListView,
     PropertyImageCreateView,
     PropertyServiceListView,
@@ -61,11 +62,17 @@ urlpatterns = [
         CategoryPropertyRecommendationView.as_view(),
         name="category-property-recommendation",
     ),
+    path("properties", PropertyListCreateView.as_view(), name="property-list-create-no-slash"),
     path("properties/", PropertyListCreateView.as_view(), name="property-list-create"),
     path(
         "properties/apartments/",
         ApartmentPropertyListCreateView.as_view(),
         name="apartment-property-list-create",
+    ),
+    path(
+        "properties/cottages/",
+        CottagePropertyListCreateView.as_view(),
+        name="cottage-property-list-create",
     ),
     path(
         "properties/favorites/",

@@ -3,10 +3,9 @@ import os
 import re
 from celery import Celery
 from celery.schedules import crontab
+from django.conf import settings
 
 # from kombu import Queue, Exchange
-
-from core import settings
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 app = Celery("core")
@@ -38,6 +37,7 @@ app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 REDIS_CONNECTION_STRING = _resolve_env_value(
     os.environ.get("REDIS_CONNECTION_STRING")
 )
+TASK_ALWAYS_EAGER = bool(getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False))
 
 # Local (DEBUG=True) bo‘lsa — local Redis, serverda — REDIS_CONNECTION_STRING
 if getattr(settings, "DEBUG", False):
@@ -50,7 +50,11 @@ else:
     if BROKER_URL:
         logger.info("Celery: server Redis (REDIS_CONNECTION_STRING)")
 
-if not BROKER_URL:
+if TASK_ALWAYS_EAGER:
+    # Tests/development eager mode should not require Redis.
+    BROKER_URL = BROKER_URL or "memory://localhost/"
+    RESULT_BACKEND = RESULT_BACKEND or "cache+memory://"
+elif not BROKER_URL:
     logger.warning(
         "Celery broker/backend URL is empty. Set REDIS_CONNECTION_STRING (server) yoki DEBUG=True (local)."
     )
@@ -62,7 +66,7 @@ app.conf.update(
     accept_content=["json"],
     task_serializer="json",
     result_serializer="json",
-    task_always_eager=getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False),
+    task_always_eager=TASK_ALWAYS_EAGER,
     timezone="Asia/Tashkent",
     # task_default_queue='normal',
     # task_default_exchange='normal',

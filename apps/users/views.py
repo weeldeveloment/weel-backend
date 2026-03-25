@@ -350,7 +350,7 @@ class UserTokenRefreshView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         except Exception as e:
-            print("err in api:", e)
+            logger.warning("Token refresh failed in API: %s", e)
             return Response(
                 {"detail": _("Token refresh failed")},
                 status=status.HTTP_400_BAD_REQUEST,
