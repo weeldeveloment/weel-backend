@@ -320,8 +320,16 @@ class ResendOTPSerializer(serializers.Serializer):
 class PartnerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Partner
-        fields = ["id", "username", "first_name", "last_name", "phone_number", "avatar"]
-        read_only_fields = ("id",)
+        fields = [
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "phone_number",
+            "avatar",
+            "created_at",
+        ]
+        read_only_fields = ("id", "created_at")
 
 
 class PartnerPassportUploadSerializer(serializers.ModelSerializer):

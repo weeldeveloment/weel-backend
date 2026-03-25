@@ -1,6 +1,7 @@
 from datetime import date, time, timedelta
 from decimal import Decimal
 from unittest.mock import patch
+import uuid
 
 from django.db import IntegrityError
 from django.test import TestCase, RequestFactory, override_settings
@@ -64,11 +65,13 @@ class SanatoriumTestMixin:
 
     @staticmethod
     def make_partner(**kwargs):
+        partner_suffix = uuid.uuid4().hex[:8]
+        phone_suffix = uuid.uuid4().int % 10**7
         defaults = {
             "first_name": "Test",
             "last_name": "Partner",
-            "username": "testpartner",
-            "phone_number": "+998901234567",
+            "username": f"testpartner_{partner_suffix}",
+            "phone_number": f"+99890{phone_suffix:07d}",
             "is_active": True,
         }
         defaults.update(kwargs)
@@ -76,10 +79,11 @@ class SanatoriumTestMixin:
 
     @staticmethod
     def make_client(**kwargs):
+        phone_suffix = uuid.uuid4().int % 10**7
         defaults = {
             "first_name": "Test",
             "last_name": "Client",
-            "phone_number": "+998901111111",
+            "phone_number": f"+99891{phone_suffix:07d}",
             "is_active": True,
         }
         defaults.update(kwargs)

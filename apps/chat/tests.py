@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import uuid
 
 from django.test import TestCase
 from django.contrib.auth import get_user_model
@@ -16,12 +17,20 @@ User = get_user_model()
 class ChatPushNotificationTests(TestCase):
     def setUp(self):
         self.api = APIClient()
-        self.admin = User.objects.create(username="admin", is_staff=True, is_active=True)
+        self.admin, _ = User.objects.get_or_create(
+            username="admin",
+            defaults={"is_staff": True, "is_active": True},
+        )
+        if not self.admin.is_staff or not self.admin.is_active:
+            self.admin.is_staff = True
+            self.admin.is_active = True
+            self.admin.save(update_fields=["is_staff", "is_active"])
+        phone_suffix = uuid.uuid4().int % 10**7
         self.partner = Partner.objects.create(
             first_name="Test",
             last_name="Partner",
-            username="partner1",
-            phone_number="+998901234568",
+            username=f"partner_{uuid.uuid4().hex[:8]}",
+            phone_number=f"+99890{phone_suffix:07d}",
             is_active=True,
         )
         tokens = create_admin_tokens(self.admin)

@@ -962,15 +962,12 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
     """Admin: faqat Cottages tipidagi propertylar."""
 
     property_type_title_en = "Cottages"
-    inlines = [PropertyImageInline, CottageDetailInline, CottageRoomInline, CottagePriceInline]
+    inlines = [CottageRoomInline, PropertyImageInline, CottageDetailInline, CottagePriceInline]
     list_display = [
         "guid",
         "title",
-        "home_number_display",
         "currency",
-        "region",
-        "district",
-        "shaharcha",
+        "mahalla",
         "verification_status",
         "is_verified",
         "verified_at",
@@ -1051,14 +1048,6 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
             },
         ),
     ]
-
-    @admin.display(description=_("Home #"))
-    def home_number_display(self, obj):
-        detail = getattr(obj, "property_detail", None)
-        if detail:
-            return detail.home_number or "—"
-        return "—"
-
 
 @admin.register(PropertyDetail)
 class PropertyDetailAdmin(ModelAdmin):
