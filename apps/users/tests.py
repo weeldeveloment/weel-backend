@@ -2,11 +2,13 @@
 
 import logging
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError
+from django.db.utils import ProgrammingError
 
 from rest_framework import status
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
@@ -45,6 +47,7 @@ from .views import (
     ClientLogoutView,
     UserTokenRefreshView,
     OwnAccountView,
+    deactivate_account,
 )
 from .authentication import ClientJWTAuthentication, PartnerJWTAuthentication
 
@@ -484,6 +487,28 @@ class OwnAccountViewTests(TestCase):
         response = api.delete("/api/user/account/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(Partner.objects.filter(id=partner_user.id).exists())
+
+
+class DeactivateAccountFallbackTests(TestCase):
+    def test_partner_soft_deactivates_when_orm_and_raw_sql_delete_fail(self):
+        partner_user = make_partner(phone_number="+998911234567")
+        original_phone = partner_user.phone_number
+
+        with patch("users.views.Partner.delete", side_effect=ProgrammingError("schema mismatch")):
+            from django.db.backends.utils import CursorWrapper
+            original_execute = CursorWrapper.execute
+
+            def _execute(self, sql, params=None):
+                if isinstance(sql, str) and "DELETE FROM users_partner" in sql:
+                    raise IntegrityError("fk violation")
+                return original_execute(self, sql, params)
+
+            with patch("django.db.backends.utils.CursorWrapper.execute", new=_execute):
+                deactivate_account(partner_user)
+
+        partner_user.refresh_from_db()
+        self.assertFalse(partner_user.is_active)
+        self.assertNotEqual(partner_user.phone_number, original_phone)
 
 
 # ──────────────────────────────────────────────
