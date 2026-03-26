@@ -460,7 +460,7 @@ ESKIZ_PASSWORD = os.getenv("ESKIZ_PASSWORD")
 CELERY_TASK_ALWAYS_EAGER = DEBUG
 
 # Jwt Token Issuer
-JWT_ISSUER = os.getenv("JWT_ISSUER")
+JWT_ISSUER = (os.getenv("JWT_ISSUER") or "weel-backend").strip() or "weel-backend"
 
 # Test user - OTP so'ralmaydi (development va production)
 TEST_USER_PHONE_NUMBER = (os.getenv("TEST_USER_PHONE_NUMBER") or "").strip() or None
