@@ -53,7 +53,6 @@ urlpatterns = [
         CategoryPropertyRecommendationView.as_view(),
         name="category-property-recommendation",
     ),
-    path("properties", PropertyListCreateView.as_view(), name="property-list-create-no-slash"),
     path("properties/", PropertyListCreateView.as_view(), name="property-list-create"),
     path(
         "properties/apartments/",
@@ -76,11 +75,6 @@ urlpatterns = [
         name="property-filter-by-link",
     ),
     path("partner/properties/", PartnerPropertyListView.as_view(), name="partner-property-list"),
-    path(
-        "properties/<uuid:property_id>",
-        PropertyRetrieveUpdateDestroyView.as_view(),
-        name="property-retrieve-update-destroy-no-slash",
-    ),
     path(
         "properties/<uuid:property_id>/",
         PropertyRetrieveUpdateDestroyView.as_view(),

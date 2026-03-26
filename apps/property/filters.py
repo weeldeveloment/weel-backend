@@ -63,11 +63,9 @@ class PropertyFilter(filters.FilterSet):
     property_type = filters.UUIDFilter(
         field_name="property_type__guid", lookup_expr="exact"
     )
-    region_id = filters.UUIDFilter(
-        field_name="region__guid", lookup_expr="exact", label="region_id"
-    )
-    district_id = filters.UUIDFilter(
-        field_name="district__guid", lookup_expr="exact", label="district_id"
+    location_id = filters.CharFilter(
+        method="filter_location_id",
+        label="location_id",
     )
     property_services = filters.CharFilter(
         field_name="property_services",
@@ -88,8 +86,7 @@ class PropertyFilter(filters.FilterSet):
         model = Property
         fields = [
             "property_type",
-            "region_id",
-            "district_id",
+            "location_id",
             "property_services",
             "min_price",
             "max_price",
@@ -97,6 +94,16 @@ class PropertyFilter(filters.FilterSet):
             "from_date",
             "to_date",
         ]
+
+    def filter_location_id(self, queryset, name, value):
+        raw = str(value).strip() if value is not None else ""
+        if raw.lower() in {"", "null", "none", "undefined"}:
+            return queryset.none()
+        try:
+            location_uuid = uuid.UUID(raw)
+        except (ValueError, TypeError):
+            return queryset.none()
+        return queryset.filter(Q(region__guid=location_uuid) | Q(district__guid=location_uuid))
 
     def _bound_filter_price_range(
         self, value: str, currency: str

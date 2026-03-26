@@ -167,6 +167,12 @@ def _parse_uuid_param(value: str, param_name: str) -> uuid_module.UUID | None:
         raise ValidationError({param_name: _("Must be a valid UUID.")})
 
 
+def _is_null_like_param(value: str | None) -> bool:
+    if value is None:
+        return True
+    return str(value).strip().lower() in {"", "null", "none", "undefined"}
+
+
 class DistrictListView(ListAPIView):
     """Tuman/shahar roʻyxati — ixtiyoriy filter: region_id (viloyat guid)."""
     serializer_class = DistrictListSerializer
@@ -560,7 +566,44 @@ class PropertyListCreateView(ListCreateAPIView):
             return PropertyCreateSerializer
         return PropertyListSerializer
 
+    def _resolve_location_filter_uuid(self) -> tuple[bool, uuid_module.UUID | None]:
+        """
+        location filter uchun bir nechta query param aliasini qoʻllab-quvvatlaydi.
+        location_id/id/region_id/district_id/guid dan birinchi non-null qiymat olinadi.
+
+        Returns:
+            (False, None): location filter yuborilmagan.
+            (True, <uuid>): valid location filter topildi.
+            (True, None): location filter yuborilgan, lekin null/invalid.
+        """
+        query_params = self.request.query_params
+        location_keys = ("location_id", "id", "region_id", "district_id", "guid")
+
+        if not any(key in query_params for key in location_keys):
+            return False, None
+
+        candidates = (
+            query_params.get("location_id"),
+            query_params.get("id"),
+            query_params.get("region_id"),
+            query_params.get("district_id"),
+            query_params.get("guid"),
+        )
+        selected = next((v for v in candidates if not _is_null_like_param(v)), None)
+        if selected is None:
+            return True, None
+
+        raw = str(selected).strip()
+        first = raw.split("/")[0].strip()
+        try:
+            return True, uuid_module.UUID(first)
+        except (ValueError, TypeError):
+            return True, None
+
     def get_queryset(self):
+        has_location_filter, location_uuid = self._resolve_location_filter_uuid()
+        invalid_location_filter = has_location_filter and location_uuid is None
+
         rate = exchange_rate()
 
         today = date.today()
@@ -577,10 +620,17 @@ class PropertyListCreateView(ListCreateAPIView):
         )
 
         # Partner with ?mine=1 sees only their own properties (verified + unverified).
-        if self.request.GET.get("mine") and isinstance(self.request.user, Partner):
+        if self.request.query_params.get("mine") and isinstance(self.request.user, Partner):
             base_qs = Property.objects.filter(partner=self.request.user)
         else:
             base_qs = Property.objects.filter(is_verified=True)
+
+        if invalid_location_filter:
+            base_qs = base_qs.none()
+        elif location_uuid is not None:
+            base_qs = base_qs.filter(
+                Q(region__guid=location_uuid) | Q(district__guid=location_uuid)
+            )
 
         property = (
             base_qs
@@ -657,7 +707,7 @@ class PropertyListCreateView(ListCreateAPIView):
             "- `sort` — price_high, price_low, rating_high, rating_low, reviews_high, reviews_low, title_asc, title_desc\n"
             "- `ordering` — `order_price`, `-order_price`, `average_rating`, `-average_rating`, `title`, `comment_count`\n"
             "- `property_type` — property type GUID (GET /api/property/types/)\n"
-            "- `region_id`, `district_id` — location IDs (GET /api/property/regions/, /districts/)\n"
+            "- `location_id` — bitta location GUID (region yoki district GUID)\n"
             "- `property_services` — service GUIDs (comma-separated: `uuid1,uuid2`)\n"
             "- `min_price`, `max_price`, `currency` — price range (USD or UZS)\n"
             "- `from_date`, `to_date` — date range\n"
@@ -680,8 +730,13 @@ class PropertyListCreateView(ListCreateAPIView):
                 description="order_price, -order_price, average_rating, -average_rating, title, comment_count",
             ),
             openapi.Parameter("property_type", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
-            openapi.Parameter("region_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
-            openapi.Parameter("district_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
+            openapi.Parameter(
+                "location_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                description="Region yoki district GUID",
+            ),
             openapi.Parameter(
                 "property_services",
                 openapi.IN_QUERY,
@@ -747,8 +802,8 @@ class PropertyFilterByLinkView(PropertyListCreateView):
         operation_description=(
             "**Server-side rendering:** frontend dan **url** keladi, backend shu URL ni olib "
             "query parametrlariga ko'ra propertylarni filter qilib natijani qaytaradi.\n\n"
-            "Body: `{\"url\": \"https://weel.uz/properties?region_id=xxx&min_price=100\"}`. "
-            "URL dagi parametrlar GET /api/property/properties/ dagi kabi (region_id, property_type, "
+            "Body: `{\"url\": \"https://weel.uz/properties?location_id=xxx&min_price=100\"}`. "
+            "URL dagi parametrlar GET /api/property/properties/ dagi kabi (location_id, property_type, "
             "min_price, max_price, from_date, to_date, ...) qo'llanadi. Natija faqat response da, DB ga yozilmaydi."
         ),
         request_body=openapi.Schema(
@@ -922,7 +977,13 @@ class RegionPropertyListView(PropertyListCreateView):
             openapi.Parameter("search", openapi.IN_QUERY, type=openapi.TYPE_STRING),
             openapi.Parameter("sort", openapi.IN_QUERY, type=openapi.TYPE_STRING),
             openapi.Parameter("ordering", openapi.IN_QUERY, type=openapi.TYPE_STRING),
-            openapi.Parameter("district_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
+            openapi.Parameter(
+                "location_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                description="Region yoki district GUID",
+            ),
             openapi.Parameter("min_price", openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
             openapi.Parameter("max_price", openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
         ],

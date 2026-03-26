@@ -95,6 +95,7 @@ Thumbs.db
 logs/
 media_backup/
 *.pid
+media/*
 
 # Postman
 postman_tests/
