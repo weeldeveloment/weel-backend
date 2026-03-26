@@ -63,3 +63,6 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     }
 }
+
+# Keep booking price calculations stable in tests.
+SERVICE_FEE = "20"

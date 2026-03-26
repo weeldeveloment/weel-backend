@@ -477,8 +477,8 @@ CURRENT_CURRENCY_EXCHANGE_RATE = os.getenv(
     "https://open.er-api.com/v6/latest/USD",
 )
 
-# Service fee
-SERVICE_FEE = os.getenv("SERVICE_FEE")
+# Service fee (percentage)
+SERVICE_FEE = (os.getenv("SERVICE_FEE") or "20").strip() or "20"
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN_APP = os.getenv("TELEGRAM_BOT_TOKEN_APP")

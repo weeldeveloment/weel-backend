@@ -1,7 +1,7 @@
 import logging
 
 from datetime import timedelta, date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from rest_framework.exceptions import ValidationError, PermissionDenied
 
@@ -213,7 +213,14 @@ class CalendarDateService:
 
 class BookingPriceService:
     def __init__(self):
-        self.server_fee = Decimal(settings.SERVICE_FEE)
+        raw_service_fee = getattr(settings, "SERVICE_FEE", "20")
+        try:
+            self.server_fee = Decimal(str(raw_service_fee or "20"))
+        except (InvalidOperation, TypeError, ValueError):
+            logger.warning(
+                "Invalid SERVICE_FEE=%r. Falling back to 20.", raw_service_fee
+            )
+            self.server_fee = Decimal("20")
 
     def _date_range(self, start: date, end: date):
         current_date = start
