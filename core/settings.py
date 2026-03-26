@@ -460,7 +460,7 @@ ESKIZ_PASSWORD = os.getenv("ESKIZ_PASSWORD")
 CELERY_TASK_ALWAYS_EAGER = DEBUG
 
 # Jwt Token Issuer
-JWT_ISSUER = os.getenv("JWT_ISSUER")
+JWT_ISSUER = (os.getenv("JWT_ISSUER") or "weel-backend").strip() or "weel-backend"
 
 # Test user - OTP so'ralmaydi (development va production)
 TEST_USER_PHONE_NUMBER = (os.getenv("TEST_USER_PHONE_NUMBER") or "").strip() or None
@@ -477,8 +477,8 @@ CURRENT_CURRENCY_EXCHANGE_RATE = os.getenv(
     "https://open.er-api.com/v6/latest/USD",
 )
 
-# Service fee
-SERVICE_FEE = os.getenv("SERVICE_FEE")
+# Service fee (percentage)
+SERVICE_FEE = (os.getenv("SERVICE_FEE") or "20").strip() or "20"
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN_APP = os.getenv("TELEGRAM_BOT_TOKEN_APP")

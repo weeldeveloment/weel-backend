@@ -176,57 +176,6 @@ class District(BaseModel):
     def __repr__(self):
         return f"<District id={self.guid} region={self.region_id} title_uz='{self.title_uz}'>"
 
-
-class Shaharcha(BaseModel):
-    """Tuman ichidagi shaharcha — filter va property joylashuvi uchun."""
-
-    district = models.ForeignKey(
-        District,
-        on_delete=models.CASCADE,
-        related_name="shaharchas",
-        verbose_name=_("District"),
-    )
-    title_uz = models.CharField(max_length=100, verbose_name=_("Title (uz)"))
-    title_ru = models.CharField(max_length=100, verbose_name=_("Title (ru)"))
-    title_en = models.CharField(max_length=100, verbose_name=_("Title (en)"))
-
-    class Meta:
-        verbose_name = _("Shaharcha")
-        verbose_name_plural = _("Shaharchas")
-        ordering = ["district", "title_uz"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["district", "title_uz"],
-                name="unique_district_shaharcha_uz",
-            )
-        ]
-
-    def __str__(self):
-        return f"{self.title_uz} ({self.district.title_uz})"
-
-    def __repr__(self):
-        return f"<Shaharcha id={self.guid} district={self.district_id} title_uz='{self.title_uz}'>"
-
-
-class Mahalla(BaseModel):
-    """Mahalla — property joylashuvi (filter va property uchun). Admin orqali qoʻshish mumkin."""
-
-    title_uz = models.CharField(max_length=150, unique=True, verbose_name=_("Title (uz)"))
-    title_ru = models.CharField(max_length=150, blank=True, verbose_name=_("Title (ru)"))
-    title_en = models.CharField(max_length=150, blank=True, verbose_name=_("Title (en)"))
-
-    class Meta:
-        verbose_name = _("Mahalla")
-        verbose_name_plural = _("Mahallas")
-        ordering = ["title_uz"]
-
-    def __str__(self):
-        return self.title_uz
-
-    def __repr__(self):
-        return f"<Mahalla id={self.guid} title_uz='{self.title_uz}'>"
-
-
 class VerificationStatus(models.TextChoices):
     WAITING = ("waiting", _("Waiting"))
     ACCEPTED = ("accepted", _("Accepted"))
@@ -286,22 +235,6 @@ class Property(HardDeleteBaseModel, VerifiedByMixin):
         blank=True,
         related_name="properties",
         verbose_name=_("District"),
-    )
-    shaharcha = models.ForeignKey(
-        Shaharcha,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="properties",
-        verbose_name=_("Shaharcha"),
-    )
-    mahalla = models.ForeignKey(
-        "Mahalla",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="properties",
-        verbose_name=_("Mahalla"),
     )
     property_services = models.ManyToManyField(
         PropertyService,

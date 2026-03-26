@@ -1,11 +1,8 @@
 import copy
-import json
 
 from django import forms
 from django.contrib import admin
 from django.db.models import Q
-from django.http import JsonResponse
-from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.translation import get_language
 from django.utils.translation import gettext_lazy as _
@@ -27,8 +24,6 @@ from .models import (
     PropertyLocation,
     Region,
     District,
-    Shaharcha,
-    Mahalla,
 )
 from .models import VerificationStatus
 
@@ -96,170 +91,6 @@ class DistrictAdmin(ModelAdmin):
     list_display = ["guid", "title_uz", "region", "created_at"]
     list_filter = ["region"]
     list_filter_submit = False
-
-
-class ShaharchaAdminForm(forms.ModelForm):
-    """Viloyat tanlash → shu viloyatdagi tumanlar → yangi shaharcha nomlari (3 ta)."""
-
-    region = forms.ModelChoiceField(
-        queryset=Region.objects.all().order_by("title_uz"),
-        required=False,
-        label=_("Viloyat"),
-        help_text=_("Avval viloyatni tanlang, keyin tuman roʻyxati filtrlanadi."),
-    )
-
-    class Meta:
-        model = Shaharcha
-        fields = ["district", "title_uz", "title_ru", "title_en"]
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["district"].label = _("Tuman")
-        self.fields["district"].help_text = _(
-            "Viloyatni tanlaganingizdan keyin shu viloyatdagi tumanlardan tanlang."
-        )
-        if self.instance and self.instance.pk and self.instance.district_id:
-            self.fields["region"].initial = self.instance.district.region
-        # Tartib: region, district, title_uz, title_ru, title_en
-        order = ["region", "district", "title_uz", "title_ru", "title_en"]
-        self.fields = type(self.fields)(
-            (k, self.fields[k]) for k in order if k in self.fields
-        )
-
-    def clean(self):
-        data = super().clean()
-        region = data.get("region")
-        district = data.get("district")
-        if district and region and district.region_id != region.id:
-            raise forms.ValidationError(
-                _("Tanlangan tuman shu viloyatga tegishli emas.")
-            )
-        return data
-
-
-@admin.register(Mahalla)
-class MahallaAdmin(ModelAdmin):
-    list_display = ["guid", "title_uz", "title_ru", "title_en", "created_at"]
-    list_filter_submit = False
-    search_fields = ["title_uz", "title_ru", "title_en"]
-    ordering = ["title_uz"]
-
-
-@admin.register(Shaharcha)
-class ShaharchaAdmin(ModelAdmin):
-    form = ShaharchaAdminForm
-    list_display = ["guid", "title_uz", "district", "created_at"]
-    list_filter = ["district__region", "district"]
-    list_filter_submit = False
-    change_form_template = "admin/property/shaharcha/change_form.html"
-    fieldsets = [
-        (
-            None,
-            {
-                "fields": ["region", "district", "title_uz", "title_ru", "title_en"],
-            },
-        ),
-    ]
-
-    def get_form(self, request, obj=None, **kwargs):
-        form_class = super().get_form(request, obj, **kwargs)
-        # Viloyat maydonida plus/edit/view tugmalari bo‘lmasin — oddiy dropdown
-        class WrapForm(form_class):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                if "district" in self.fields and "region" in self.fields:
-                    self.fields["region"].widget.attrs.update(
-                        self.fields["district"].widget.attrs
-                    )
-
-        return WrapForm
-
-    def get_urls(self):
-        urls = super().get_urls()
-        custom = [
-            path(
-                "get-districts/",
-                self.admin_site.admin_view(self.get_districts_view),
-                name="property_shaharcha_get-districts",
-            ),
-        ]
-        return custom + urls
-
-    def get_districts_view(self, request):
-        """Viloyat bo‘yicha tumanlarni JSON qaytaradi (view orqali filtr)."""
-        region_id = request.GET.get("region_id", "").strip()
-        if not region_id:
-            return JsonResponse([])
-        try:
-            from uuid import UUID
-            UUID(region_id)
-        except (ValueError, TypeError):
-            return JsonResponse([])
-        districts = list(
-            District.objects.filter(region__guid=region_id)
-            .order_by("title_uz")
-            .values("guid", "title_uz")
-        )
-        data = [
-            {"guid": str(d["guid"]), "title_uz": d["title_uz"]}
-            for d in districts
-        ]
-        return JsonResponse(data)
-
-    def _get_districts_by_region(self):
-        """Har bir viloyat uchun tumanlar + viloyat tanlanmasa barcha tumanlar ("" kaliti)."""
-        qs = (
-            Region.objects.prefetch_related("districts")
-            .order_by("title_uz")
-        )
-        by_region = {}
-        for r in qs:
-            dist_list = [
-                {"pk": d.pk, "title_uz": d.title_uz}
-                for d in r.districts.order_by("title_uz")
-            ]
-            # Region dropdown qiymati Django ModelChoiceField da pk (id) bo'ladi
-            by_region[str(r.pk)] = dist_list
-            by_region[str(r.guid)] = dist_list
-            by_region[r.title_uz] = dist_list
-        all_districts = [
-            {"pk": d.pk, "title_uz": d.title_uz}
-            for d in District.objects.select_related("region").order_by("region", "title_uz")
-        ]
-        by_region[""] = all_districts
-        return by_region
-
-    def add_view(self, request, form_url="", extra_context=None):
-        extra_context = extra_context or {}
-        extra_context["districts_by_region"] = json.dumps(
-            self._get_districts_by_region()
-        )
-        try:
-            extra_context["get_districts_url"] = request.build_absolute_uri(
-                reverse(
-                    "admin:property_shaharcha_get-districts",
-                    current_app=self.admin_site.name,
-                )
-            )
-        except Exception:
-            extra_context["get_districts_url"] = ""
-        return super().add_view(request, form_url, extra_context)
-
-    def change_view(self, request, object_id, form_url="", extra_context=None):
-        extra_context = extra_context or {}
-        extra_context["districts_by_region"] = json.dumps(
-            self._get_districts_by_region()
-        )
-        try:
-            extra_context["get_districts_url"] = request.build_absolute_uri(
-                reverse(
-                    "admin:property_shaharcha_get-districts",
-                    current_app=self.admin_site.name,
-                )
-            )
-        except Exception:
-            extra_context["get_districts_url"] = ""
-        return super().change_view(request, object_id, form_url, extra_context)
 
 
 @admin.register(PropertyLocation)
@@ -424,8 +255,6 @@ PROPERTY_DETAIL_ADMIN_PROPERTY_FIELDS = [
     "property_location",
     "region",
     "district",
-    "shaharcha",
-    "mahalla",
     "property_services",
     "categories",
     "minimum_weekend_day_stay",
@@ -563,19 +392,10 @@ class PropertyDetailAdminForm(forms.ModelForm):
 
         region = data.get("region")
         district = data.get("district")
-        shaharcha = data.get("shaharcha")
         if district and region and district.region_id != region.id:
             self.add_error("district", _("District must belong to the selected region."))
         if district and not region:
             data["region"] = district.region
-        if shaharcha and district and shaharcha.district_id != district.id:
-            self.add_error(
-                "shaharcha",
-                _("Shaharcha must belong to the selected district."),
-            )
-        if shaharcha and not district:
-            data["district"] = shaharcha.district
-            data["region"] = shaharcha.district.region
 
         title = data.get("title")
         property_obj = data.get("property") or getattr(self.instance, "property", None)
@@ -690,8 +510,6 @@ class PropertyAdmin(ModelAdmin):
                         "property_location",
                         "region",
                         "district",
-                        "shaharcha",
-                        "mahalla",
                     ]
                 },
             ),
@@ -734,8 +552,6 @@ class PropertyAdmin(ModelAdmin):
                         "property_location",
                         "region",
                         "district",
-                        "shaharcha",
-                        "mahalla",
                     ]
                 },
             ),
@@ -866,7 +682,6 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
         "currency",
         "region",
         "district",
-        "shaharcha",
         "verification_status",
         "is_verified",
         "verified_at",
@@ -904,8 +719,6 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
                     "property_location",
                     "region",
                     "district",
-                    "shaharcha",
-                    "mahalla",
                 ]
             },
         ),
@@ -967,7 +780,6 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
         "guid",
         "title",
         "currency",
-        "mahalla",
         "verification_status",
         "is_verified",
         "verified_at",
@@ -1004,8 +816,6 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
                     "property_location",
                     "region",
                     "district",
-                    "shaharcha",
-                    "mahalla",
                 ]
             },
         ),
@@ -1173,8 +983,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_location",
                         "region",
                         "district",
-                        "shaharcha",
-                        "mahalla",
                     ]
                 },
             ),
@@ -1251,8 +1059,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_location",
                         "region",
                         "district",
-                        "shaharcha",
-                        "mahalla",
                     ]
                 },
             ),
@@ -1316,8 +1122,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_location",
                         "region",
                         "district",
-                        "shaharcha",
-                        "mahalla",
                         "property_services",
                         "categories",
                         "minimum_weekend_day_stay",
