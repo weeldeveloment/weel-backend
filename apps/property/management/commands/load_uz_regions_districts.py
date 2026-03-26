@@ -13,7 +13,7 @@ import os
 
 from django.core.management.base import BaseCommand
 
-from property.models import Region, District, Shaharcha
+from property.models import Region, District
 
 
 # Standart viloyat nomlari (Oʻzbekiston boʻylab)
@@ -102,189 +102,6 @@ DEFAULT_DISTRICTS_BY_REGION = {
     ],
 }
 
-# (region_title_uz, district_title_uz) -> shaharchalar roʻyxati (qoʻshimcha, Boʻstonliq kabi bir nechta shaharcha)
-DEFAULT_SHAHARCHAS = {
-    ("Toshkent", "Boʻstonliq"): [
-        "G'azalkent",
-        "Chimyon",
-        "Burchmulla",
-        "Qoraqoʻrgʻon",
-        "Sijjak",
-        "Oʻrtaovul",
-        "Nureta",
-        "Pskem",
-    ],
-}
-
-# Har bir tuman uchun tuman markazi (Wikipedia: Oʻzbekiston:Tumanlar — Markaz ustuni)
-# (region_title_uz, district_title_uz) -> markaz (bitta shaharcha)
-TUMAN_MARKAZI = {
-    ("Qoraqalpogʻiston", "Amudaryo"): "Mangʻit",
-    ("Andijon", "Andijon"): "Kuyganyor",
-    ("Surxondaryo", "Angor"): "Angor",
-    ("Jizzax", "Arnasoy"): "Gʻoliblar",
-    ("Andijon", "Asaka"): "Asaka",
-    ("Qashqadaryo", "Bahoriston"): "Pomuq",
-    ("Andijon", "Baliqchi"): "Baliqchi",
-    ("Surxondaryo", "Bandixon"): "Bandixon",
-    ("Jizzax", "Baxmal"): "Usmat",
-    ("Toshkent", "Bekobod"): "Zafar",
-    ("Qoraqalpogʻiston", "Beruniy"): "Beruniy",
-    ("Fargʻona", "Beshariq"): "Beshariq",
-    ("Fargʻona", "Bogʻdod"): "Bagʻdod",
-    ("Xorazm", "Bogʻot"): "Bogʻot",
-    ("Toshkent", "Boʻka"): "Boʻka",
-    ("Sirdaryo", "Boyovut"): "Boyovut",
-    ("Surxondaryo", "Boysun"): "Boysun",
-    ("Qoraqalpogʻiston", "Boʻzatov"): "Qozonketkan",
-    ("Andijon", "Boʻzsuv"): "Boʻz",
-    ("Andijon", "Buloqboshi"): "Buloqboshi",
-    ("Samarqand", "Bulungʻur"): "Bulungʻur",
-    ("Fargʻona", "Buvayda"): "Yangiqoʻrgʻon",
-    ("Buxoro", "Buxoro"): "Galaosiyo",
-    ("Qoraqalpogʻiston", "Chimboy"): "Chimboy",
-    ("Toshkent", "Chinoz"): "Chinoz",
-    ("Qashqadaryo", "Chiroqchi"): "Chiroqchi",
-    ("Namangan", "Chortoq"): "Chortoq",
-    ("Namangan", "Chust"): "Chust",
-    ("Fargʻona", "Dangʻara"): "Dangʻara",
-    ("Qashqadaryo", "Dehqonobod"): "Karashina",
-    ("Surxondaryo", "Denov"): "Denov",
-    ("Jizzax", "Doʻstlik"): "Doʻstlik",
-    ("Qoraqalpogʻiston", "Ellikqala"): "Boʻston",
-    ("Fargʻona", "Fargʻona"): "Vodil",
-    ("Jizzax", "Forish"): "Yangiqishloq",
-    ("Fargʻona", "Furqat"): "Navbahor",
-    ("Jizzax", "Gʻallaorol"): "Gʻallaorol",
-    ("Buxoro", "Gʻijduvon"): "Gʻijduvon",
-    ("Sirdaryo", "Guliston"): "Dehqonobod",
-    ("Xorazm", "Gurlan"): "Gurlan",
-    ("Qashqadaryo", "Gʻuzor"): "Gʻuzor",
-    ("Xorazm", "Hazorasp"): "Hazorasp",
-    ("Samarqand", "Ishtixon"): "Ishtixon",
-    ("Andijon", "Izboskan"): "Poytugʻ",
-    ("Andijon", "Jalolquduq"): "Jalaquduq",
-    ("Surxondaryo", "Jarqoʻrgʻon"): "Jarqoʻrgʻon",
-    ("Jizzax", "Jizzax"): "Uchtepa",
-    ("Samarqand", "Jomboy"): "Jomboy",
-    ("Buxoro", "Jondor"): "Jondor",
-    ("Navoiy shahri", "Karmana"): "Karmana",
-    ("Qashqadaryo", "Kasbi"): "Mugʻlon",
-    ("Samarqand", "Kattaqoʻrgʻon"): "Payshanba",
-    ("Qoraqalpogʻiston", "Kegeyli"): "Kegeyli",
-    ("Qashqadaryo", "Kitob"): "Kitob",
-    ("Buxoro", "Kogon"): "Kogon",
-    ("Navoiy", "Konimex"): "Konimex",
-    ("Qashqadaryo", "Koson"): "Koson",
-    ("Namangan", "Kosonsoy"): "Kosonsoy",
-    ("Andijon", "Marhamat"): "Marhamat",
-    ("Sirdaryo", "Mehnatobod"): "Qahramon",
-    ("Namangan", "Mingbuloq"): "Jomashoʻy",
-    ("Jizzax", "Mirzachoʻl"): "Gagarin",
-    ("Sirdaryo", "Mirzaobod"): "Navroʻz",
-    ("Qoraqalpogʻiston", "Moʻynoq"): "Moʻynoq",
-    ("Qashqadaryo", "Muborak"): "Muborak",
-    ("Surxondaryo", "Muzrabot"): "Xalqobod",
-    ("Namangan", "Namangan"): "Toshbuloq",
-    ("Samarqand", "Narpay"): "Oqtosh",
-    ("Navoiy", "Navbahor"): "Beshrabot",
-    ("Navoiy", "Navoiy"): "Navoiy",
-    ("Qashqadaryo", "Nishon"): "Yangi Nishon",
-    ("Namangan", "Norin"): "Haqqulobod",
-    ("Qoraqalpogʻiston", "Nukus"): "Oqmangʻit",
-    ("Samarqand", "Nurobod"): "Nurobod",
-    ("Navoiy", "Nurota"): "Nurota",
-    ("Toshkent", "Ohangaron"): "Ohangaron",
-    ("Buxoro", "Olot"): "Olot",
-    ("Fargʻona", "Oltiariq"): "Oltiariq",
-    ("Andijon", "Oltinkoʻl"): "Oltinkoʻl",
-    ("Surxondaryo", "Oltinsoy"): "Qarluq",
-    ("Samarqand", "Oqdaryo"): "Loyish",
-    ("Sirdaryo", "Oqoltin"): "Sardoba",
-    ("Toshkent", "Oqqoʻrgʻon"): "Oqqoʻrgʻon",
-    ("Toshkent", "Oʻrtachirchiq"): "Toʻytepa",
-    ("Fargʻona", "Oxunboboev"): "Langar",
-    ("Fargʻona", "Oʻzbekiston"): "Yaypan",
-    ("Toshkent", "Parkent"): "Parkent",
-    ("Samarqand", "Pastdargʻom"): "Juma",
-    ("Samarqand", "Paxtachi"): "Ziyodin",
-    ("Jizzax", "Paxtakor"): "Paxtakor",
-    ("Andijon", "Paxtaobod"): "Paxtaobod",
-    ("Samarqand", "Payariq"): "Payariq",
-    ("Buxoro", "Peshku"): "Yangibozor",
-    ("Toshkent", "Piskent"): "Piskent",
-    ("Namangan", "Pop"): "Pop",
-    ("Qashqadaryo", "Qamashi"): "Qamashi",
-    ("Qoraqalpogʻiston", "Qanlikoʻl"): "Qanlikoʻl",
-    ("Qashqadaryo", "Qarshi"): "Beshkent",
-    ("Toshkent", "Qibray"): "Qibray",
-    ("Navoiy", "Qiziltepa"): "Qiziltepa",
-    ("Surxondaryo", "Qiziriq"): "Sariq",
-    ("Qoraqalpogʻiston", "Qoʻngʻirot"): "Qoʻngʻirot",
-    ("Buxoro", "Qorakoʻl"): "Qorakoʻl",
-    ("Qoraqalpogʻiston", "Qoraoʻzak"): "Qoraoʻzak",
-    ("Andijon", "Qoʻrgʻontepa"): "Qoʻrgʻontepa",
-    ("Buxoro", "Qorovulbozor"): "Qorovulbozor",
-    ("Xorazm", "Qoʻshkoʻpir"): "Qoʻshkoʻpir",
-    ("Samarqand", "Qoʻshrabot"): "Qoʻshrabot",
-    ("Fargʻona", "Qoʻshtepa"): "Langar",
-    ("Surxondaryo", "Qumqoʻrgʻon"): "Qumqoʻrgʻon",
-    ("Fargʻona", "Quva"): "Quva",
-    ("Toshkent", "Quyichirchiq"): "Doʻstobod",
-    ("Fargʻona", "Rishton"): "Rishton",
-    ("Buxoro", "Romitan"): "Romitan",
-    ("Samarqand", "Samarqand"): "Gulobod",
-    ("Surxondaryo", "Sariosiyo"): "Sariosiyo",
-    ("Sirdaryo", "Sayxunobod"): "Sayhun",
-    ("Qashqadaryo", "Shahrisabz"): "Shahrisabz",
-    ("Andijon", "Shahrixon"): "Shahrixon",
-    ("Sirdaryo", "Sharof Rashidov"): "Paxtaobod",
-    ("Surxondaryo", "Sherobod"): "Sherobod",
-    ("Buxoro", "Shofirkon"): "Shofirkon",
-    ("Surxondaryo", "Shoʻrchi"): "Shoʻrchi",
-    ("Xorazm", "Shovot"): "Shovot",
-    ("Qoraqalpogʻiston", "Shumanay"): "Shumanay",
-    ("Sirdaryo", "Sirdaryo"): "Sirdaryo",
-    ("Fargʻona", "Soʻx"): "Ravon",
-    ("Qoraqalpogʻiston", "Taxtakoʻpir"): "Taxtakoʻpir",
-    ("Surxondaryo", "Termiz"): "Termiz",
-    ("Navoiy", "Tomdi"): "Tomdibuloq",
-    ("Namangan", "Toʻraqoʻrgʻon"): "Toʻraqoʻrgʻon",
-    ("Qoraqalpogʻiston", "Toʻrtkoʻl"): "Toʻrtkoʻl",
-    ("Toshkent", "Toshkent"): "Keles",
-    ("Fargʻona", "Toshloq"): "Toshloq",
-    ("Samarqand", "Toyloq"): "Toyloq",
-    ("Fargʻona", "Uchkoʻprik"): "Uchkoʻprik",
-    ("Namangan", "Uchqoʻrgʻon"): "Uchqoʻrgʻon",
-    ("Navoiy", "Uchquduq"): "Uchquduq",
-    ("Andijon", "Ulugʻnor"): "Oqoltin",
-    ("Xorazm", "Urganch"): "Qorovul",
-    ("Samarqand", "Urgut"): "Urgut",
-    ("Qashqadaryo", "Usmon Yusupov"): "Yangi Mirishkor",
-    ("Namangan", "Uychi"): "Uychi",
-    ("Surxondaryo", "Uzun"): "Uzun",
-    ("Buxoro", "Vobkent"): "Vobkent",
-    ("Navoiy", "Xatirchi"): "Yangirabod",
-    ("Xorazm", "Xiva"): "Xiva",
-    ("Andijon", "Xoʻjaobod"): "Xoʻjaobod",
-    ("Qoraqalpogʻiston", "Xoʻjayli"): "Xoʻjayli",
-    ("Xorazm", "Xonqa"): "Xonqa",
-    ("Sirdaryo", "Xovos"): "Farhod",
-    ("Namangan", "Yangiqoʻrgʻon"): "Yangiqoʻrgʻon",
-    ("Qashqadaryo", "Yakkabogʻ"): "Yakkabogʻ",
-    ("Xorazm", "Yangiariq"): "Yangiariq",
-    ("Xorazm", "Yangibozor"): "Yangibozor",
-    ("Jizzax", "Yangiobod"): "Balandchaqir",
-    ("Toshkent", "Yangiyoʻl"): "Gulbahor",
-    ("Fargʻona", "Yozyovon"): "Yozyovon",
-    ("Toshkent", "Yuqorichirchiq"): "Yangibozor",
-    ("Jizzax", "Zafarobod"): "Zafarobod",
-    ("Toshkent", "Zangiota"): "Eshonguzar",
-    ("Jizzax", "Zarbdor"): "Zarbdor",
-    ("Jizzax", "Zomin"): "Zomin",
-}
-
-
 def load_from_dict(regions_data, districts_by_region, verbosity=1):
     """Regions va Districts ni yaratadi (yoki yangilaydi)."""
     region_by_title_uz = {}
@@ -315,78 +132,6 @@ def load_from_dict(regions_data, districts_by_region, verbosity=1):
                 created_districts += 1
 
     return created_regions, created_districts
-
-
-def _normalize_apostrophe(s):
-    """Oʻzbek ʻ (U+02BB) va ASCII ' ni bitta belgiga keltiradi (qidiruv uchun)."""
-    if not s:
-        return s
-    return str(s).replace("\u02bb", "'").replace("'", "'")
-
-
-def _get_region_district(region_title_uz, district_title_uz, verbosity=1):
-    """Viloyat va tumanni topadi (apostrof farqiga qarshi mustahkam). (region, district) yoki (None, None)."""
-    region = Region.objects.filter(title_uz=region_title_uz).first()
-    if not region:
-        region = Region.objects.filter(
-            title_uz__icontains=region_title_uz.replace("ʻ", "'")
-        ).first()
-    if not region:
-        if verbosity > 0:
-            print(f"Viloyat topilmadi (shaharchalar uchun): {region_title_uz}")
-        return None, None
-    district = District.objects.filter(
-        region=region, title_uz=district_title_uz
-    ).first()
-    if not district:
-        for variant in [
-            district_title_uz.replace("\u02bb", "'"),
-            district_title_uz.replace("'", "\u02bb"),
-            _normalize_apostrophe(district_title_uz),
-        ]:
-            if variant == district_title_uz:
-                continue
-            district = District.objects.filter(
-                region=region, title_uz=variant
-            ).first()
-            if district:
-                break
-    if not district and verbosity > 0:
-        print(f"Tuman topilmadi: {district_title_uz!r} ({region_title_uz})")
-    return region, district
-
-
-def _add_shaharcha(district, name_uz):
-    """Bitta shaharcha qoʻshadi, yangi yaratilgan boʻlsa True qaytaradi."""
-    _, created = Shaharcha.objects.get_or_create(
-        district=district,
-        title_uz=name_uz,
-        defaults={"title_ru": name_uz, "title_en": name_uz},
-    )
-    return created
-
-
-def load_shaharchas(verbosity=1):
-    """TUMAN_MARKAZI (har tuman markazi) va DEFAULT_SHAHARCHAS boʻyicha Shaharcha yaratadi."""
-    created = 0
-    for (region_title_uz, district_title_uz), markaz in TUMAN_MARKAZI.items():
-        region, district = _get_region_district(
-            region_title_uz, district_title_uz, verbosity
-        )
-        if district and markaz:
-            if _add_shaharcha(district, markaz):
-                created += 1
-    for (region_title_uz, district_title_uz), names in DEFAULT_SHAHARCHAS.items():
-        region, district = _get_region_district(
-            region_title_uz, district_title_uz, verbosity
-        )
-        if not district:
-            continue
-        for name_uz in names:
-            if _add_shaharcha(district, name_uz):
-                created += 1
-    return created
-
 
 class Command(BaseCommand):
     help = "Oʻzbekiston viloyatlari va tumanlarini Region va District jadvallariga yuklaydi (filter va property uchun)."
@@ -461,10 +206,8 @@ class Command(BaseCommand):
         created_regions, created_districts = load_from_dict(
             DEFAULT_REGIONS, DEFAULT_DISTRICTS_BY_REGION, verbosity=verbosity
         )
-        created_shaharchas = load_shaharchas(verbosity=verbosity)
         if verbosity > 0:
             self.stdout.write(self.style.SUCCESS(
-                f"Yuklandi: yangi {created_regions} viloyat, {created_districts} tuman, {created_shaharchas} shaharcha. "
-                "GET /api/property/regions/ , GET /api/property/districts/?region_id=<guid> , "
-                "GET /api/property/shaharchas/?district_id=<guid> orqali olish mumkin."
+                f"Yuklandi: yangi {created_regions} viloyat, {created_districts} tuman. "
+                "GET /api/property/regions/ va GET /api/property/districts/?region_id=<guid> orqali olish mumkin."
             ))

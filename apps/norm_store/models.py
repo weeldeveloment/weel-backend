@@ -119,8 +119,6 @@ class NormProperty(models.Model):
     is_archived = models.BooleanField(default=False)
     region_id = models.BigIntegerField(null=True, blank=True)
     district_id = models.BigIntegerField(null=True, blank=True)
-    shaharcha_id = models.BigIntegerField(null=True, blank=True)
-    mahalla_id = models.BigIntegerField(null=True, blank=True)
     city = models.CharField(max_length=100, blank=True, default="")
     country = models.CharField(max_length=100, blank=True, default="")
     latitude = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)

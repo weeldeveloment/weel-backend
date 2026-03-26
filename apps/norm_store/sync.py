@@ -89,8 +89,6 @@ def sync_property_to_norm(prop) -> None:
             "is_archived": bool(prop.is_archived),
             "region_id": prop.region_id,
             "district_id": prop.district_id,
-            "shaharcha_id": prop.shaharcha_id,
-            "mahalla_id": prop.mahalla_id,
             "city": (loc.city if loc else "")[:100],
             "country": (loc.country if loc else "")[:100],
             "latitude": loc.latitude if loc else None,

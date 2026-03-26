@@ -51,8 +51,6 @@ from .models import (
     PropertyLocation,
     Region,
     District,
-    Shaharcha,
-    Mahalla,
     VerificationStatus,
 )
 from payment.choices import Currency
@@ -104,48 +102,12 @@ class DistrictListSerializer(LanguageFieldMixin, serializers.ModelSerializer):
         return self.get_lang_field(obj, "title")
 
 
-class ShaharchaListSerializer(LanguageFieldMixin, serializers.ModelSerializer):
-    title = serializers.SerializerMethodField("get_title")
-    district = DistrictListSerializer(read_only=True)
-
-    class Meta:
-        model = Shaharcha
-        fields = ["guid", "title", "district"]
-
-    def get_title(self, obj):
-        return self.get_lang_field(obj, "title")
-
-
-class MahallaListSerializer(LanguageFieldMixin, serializers.ModelSerializer):
-    title = serializers.SerializerMethodField("get_title")
-
-    class Meta:
-        model = Mahalla
-        fields = ["guid", "title"]
-
-    def get_title(self, obj):
-        return self.get_lang_field(obj, "title")
-
-
-# --- Location API: bitta endpointda region → district → shaharcha va mahalla ---
-class LocationShaharchaSerializer(LanguageFieldMixin, serializers.ModelSerializer):
-    title = serializers.SerializerMethodField("get_title")
-
-    class Meta:
-        model = Shaharcha
-        fields = ["guid", "title"]
-
-    def get_title(self, obj):
-        return self.get_lang_field(obj, "title")
-
-
 class LocationDistrictSerializer(LanguageFieldMixin, serializers.ModelSerializer):
     title = serializers.SerializerMethodField("get_title")
-    shaharchas = LocationShaharchaSerializer(many=True, read_only=True)
 
     class Meta:
         model = District
-        fields = ["guid", "title", "shaharchas"]
+        fields = ["guid", "title"]
 
     def get_title(self, obj):
         return self.get_lang_field(obj, "title")
@@ -221,8 +183,6 @@ class PropertyListSerializer(serializers.ModelSerializer):
     property_images = PropertyImageSerializer(many=True)
     region = RegionListSerializer(read_only=True)
     district = DistrictListSerializer(read_only=True)
-    shaharcha = ShaharchaListSerializer(read_only=True)
-    mahalla = MahallaListSerializer(read_only=True)
     guests = serializers.IntegerField(source="property_room.guests")
     rooms = serializers.IntegerField(source="property_room.rooms")
     average_rating = serializers.SerializerMethodField("get_average_rating")
@@ -239,8 +199,6 @@ class PropertyListSerializer(serializers.ModelSerializer):
             "property_images",
             "region",
             "district",
-            "shaharcha",
-            "mahalla",
             "guests",
             "rooms",
             "average_rating",
@@ -295,8 +253,6 @@ class PartnerPropertyListSerializer(serializers.ModelSerializer):
     property_images = PropertyImageSerializer(many=True)
     region = RegionListSerializer(read_only=True)
     district = DistrictListSerializer(read_only=True)
-    shaharcha = ShaharchaListSerializer(read_only=True)
-    mahalla = MahallaListSerializer(read_only=True)
     guests = serializers.IntegerField(source="property_room.guests")
     rooms = serializers.IntegerField(source="property_room.rooms")
     average_rating = serializers.SerializerMethodField("get_average_rating")
@@ -313,8 +269,6 @@ class PartnerPropertyListSerializer(serializers.ModelSerializer):
             "property_images",
             "region",
             "district",
-            "shaharcha",
-            "mahalla",
             "guests",
             "rooms",
             "average_rating",
@@ -691,23 +645,8 @@ class PropertyCreateSerializer(
         required=False,
         allow_null=True,
     )
-    shaharcha = serializers.SlugRelatedField(
-        slug_field="guid",
-        queryset=Shaharcha.objects.all(),
-        required=False,
-        allow_null=True,
-    )
-    mahalla = serializers.SlugRelatedField(
-        slug_field="guid",
-        queryset=Mahalla.objects.all(),
-        required=False,
-        allow_null=True,
-    )
-    # API dan id orqali yuborish uchun (GET /regions/, /districts/, /shaharchas/, /mahallas/ dan olingan guid lar)
     region_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     district_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
-    shaharcha_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
-    mahalla_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
 
     class Meta:
         model = Property
@@ -720,19 +659,15 @@ class PropertyCreateSerializer(
             "property_location",
             "region",
             "district",
-            "shaharcha",
-            "mahalla",
             "region_id",
             "district_id",
-            "shaharcha_id",
-            "mahalla_id",
             "property_services",
             "property_detail",
             "property_room",
         ]
 
     def validate(self, attrs):
-        # region_id / district_id / shaharcha_id / mahalla_id yuborilsa, tegishli obyektga o‘giramiz
+        # region_id / district_id yuborilsa, tegishli obyektga o‘giramiz
         if attrs.get("region_id") is not None and attrs.get("region") is None:
             region = Region.objects.filter(guid=attrs.pop("region_id")).first()
             if region:
@@ -741,32 +676,16 @@ class PropertyCreateSerializer(
             district = District.objects.filter(guid=attrs.pop("district_id")).first()
             if district:
                 attrs["district"] = district
-        if attrs.get("shaharcha_id") is not None and attrs.get("shaharcha") is None:
-            shaharcha = Shaharcha.objects.filter(guid=attrs.pop("shaharcha_id")).first()
-            if shaharcha:
-                attrs["shaharcha"] = shaharcha
-        if attrs.get("mahalla_id") is not None and attrs.get("mahalla") is None:
-            mahalla = Mahalla.objects.filter(guid=attrs.pop("mahalla_id")).first()
-            if mahalla:
-                attrs["mahalla"] = mahalla
-        for key in ("region_id", "district_id", "shaharcha_id", "mahalla_id"):
+        for key in ("region_id", "district_id"):
             attrs.pop(key, None)
         region = attrs.get("region")
         district = attrs.get("district")
-        shaharcha = attrs.get("shaharcha")
         if district and region and district.region_id != region.id:
             raise serializers.ValidationError(
                 {"district": _("District must belong to the selected region.")}
             )
         if district and not region:
             attrs["region"] = district.region
-        if shaharcha and district and shaharcha.district_id != district.id:
-            raise serializers.ValidationError(
-                {"shaharcha": _("Shaharcha must belong to the selected district.")}
-            )
-        if shaharcha and not district:
-            attrs["district"] = shaharcha.district
-            attrs["region"] = shaharcha.district.region
         property_type = attrs.get("property_type")
         if property_type and property_type.title_en.lower() == "apartment":
             detail = attrs.get("property_detail") or {}
@@ -880,22 +799,8 @@ class PropertyUpdateSerializer(
         required=False,
         allow_null=True,
     )
-    shaharcha = serializers.SlugRelatedField(
-        slug_field="guid",
-        queryset=Shaharcha.objects.all(),
-        required=False,
-        allow_null=True,
-    )
-    mahalla = serializers.SlugRelatedField(
-        slug_field="guid",
-        queryset=Mahalla.objects.all(),
-        required=False,
-        allow_null=True,
-    )
     region_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     district_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
-    shaharcha_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
-    mahalla_id = serializers.UUIDField(required=False, allow_null=True, write_only=True)
 
     class Meta:
         model = PropertyDetail
@@ -907,12 +812,8 @@ class PropertyUpdateSerializer(
             "property_location",
             "region",
             "district",
-            "shaharcha",
-            "mahalla",
             "region_id",
             "district_id",
-            "shaharcha_id",
-            "mahalla_id",
             "property_services",
             "property_room",
             "property_detail",
@@ -927,32 +828,16 @@ class PropertyUpdateSerializer(
             district = District.objects.filter(guid=attrs.pop("district_id")).first()
             if district:
                 attrs["district"] = district
-        if attrs.get("shaharcha_id") is not None and attrs.get("shaharcha") is None:
-            shaharcha = Shaharcha.objects.filter(guid=attrs.pop("shaharcha_id")).first()
-            if shaharcha:
-                attrs["shaharcha"] = shaharcha
-        if attrs.get("mahalla_id") is not None and attrs.get("mahalla") is None:
-            mahalla = Mahalla.objects.filter(guid=attrs.pop("mahalla_id")).first()
-            if mahalla:
-                attrs["mahalla"] = mahalla
-        for key in ("region_id", "district_id", "shaharcha_id", "mahalla_id"):
+        for key in ("region_id", "district_id"):
             attrs.pop(key, None)
         region = attrs.get("region")
         district = attrs.get("district")
-        shaharcha = attrs.get("shaharcha")
         if district and region and district.region_id != region.id:
             raise serializers.ValidationError(
                 {"district": _("District must belong to the selected region.")}
             )
         if district and not region:
             attrs["region"] = district.region
-        if shaharcha and district and shaharcha.district_id != district.id:
-            raise serializers.ValidationError(
-                {"shaharcha": _("Shaharcha must belong to the selected district.")}
-            )
-        if shaharcha and not district:
-            attrs["district"] = shaharcha.district
-            attrs["region"] = shaharcha.district.region
         title = attrs.get("title")
         if title:
             property = self.instance.property
@@ -990,8 +875,6 @@ class PropertyUpdateSerializer(
         property_location_data = validated_data.pop("property_location", None)
         region = validated_data.pop("region", None)
         district = validated_data.pop("district", None)
-        shaharcha = validated_data.pop("shaharcha", None)
-        mahalla = validated_data.pop("mahalla", None)
         property_services_data = validated_data.pop("property_services", None)
         property_room_data = validated_data.pop("property_room", None)
         property_detail_data = validated_data.pop("property_detail", None)
@@ -1003,14 +886,6 @@ class PropertyUpdateSerializer(
         if district is not None:
             property.district = district
             property_update_fields.add("district")
-            property_updated = True
-        if shaharcha is not None:
-            property.shaharcha = shaharcha
-            property_update_fields.add("shaharcha")
-            property_updated = True
-        if mahalla is not None:
-            property.mahalla = mahalla
-            property_update_fields.add("mahalla")
             property_updated = True
 
         if "currency" in validated_data:

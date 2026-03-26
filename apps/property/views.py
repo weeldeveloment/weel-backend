@@ -1,7 +1,7 @@
 import uuid as uuid_module
 from datetime import date
 
-from django.db.models import Avg, Case, When, F, Q, DecimalField, Value, Prefetch, IntegerField
+from django.db.models import Avg, Case, When, F, Q, DecimalField, Value, IntegerField
 from django.db.models.aggregates import Min, Count
 from django.db.models.functions import Coalesce
 from django_filters.rest_framework import DjangoFilterBackend
@@ -37,8 +37,6 @@ from .models import (
     Category,
     Region,
     District,
-    Shaharcha,
-    Mahalla,
 )
 from .serializers import (
     PropertyListSerializer,
@@ -58,8 +56,6 @@ from .serializers import (
     PropertyReviewCreateSerializer,
     RegionListSerializer,
     DistrictListSerializer,
-    ShaharchaListSerializer,
-    MahallaListSerializer,
     LocationRegionSerializer,
 )
 from users.models import Partner
@@ -203,96 +199,33 @@ class DistrictListView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
 
-class ShaharchaListView(ListAPIView):
-    """Tuman ichidagi shaharchalar — faqat shu tuman (district_id yoki path dan)."""
-    serializer_class = ShaharchaListSerializer
-
-    def get_queryset(self):
-        qs = Shaharcha.objects.all().select_related("district", "district__region")
-        # Query param: district_id yoki districts_id (frontend xato yozsa ham)
-        district_guid = (
-            self.request.query_params.get("district_id")
-            or self.request.query_params.get("districts_id")
-        )
-        # Path dan: /api/property/districts/<uuid:district_id>/shaharchas/
-        if not district_guid and self.kwargs.get("district_id"):
-            district_guid = str(self.kwargs["district_id"])
-        if district_guid:
-            district_uuid = _parse_uuid_param(district_guid, "district_id")
-            if district_uuid:
-                qs = qs.filter(district__guid=district_uuid)
-        return qs
-
-    @swagger_auto_schema(
-        tags=["Property"],
-        operation_summary="List of shaharchas (sub-districts)",
-        operation_description="Shaharchas within a district — filter by district_id, for adding properties and filtering",
-        manual_parameters=[
-            openapi.Parameter(
-                "district_id",
-                openapi.IN_QUERY,
-                description="District GUID — shaharchas of this district only",
-                type=openapi.TYPE_STRING,
-                format=openapi.FORMAT_UUID,
-            ),
-        ],
-        responses={status.HTTP_200_OK: ShaharchaListSerializer(many=True)},
-    )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-
-class MahallaListView(ListAPIView):
-    """Barcha mahallalar roʻyxati — property qoʻshish/tahrirlash va filter uchun."""
-    queryset = Mahalla.objects.all().order_by("title_uz")
-    serializer_class = MahallaListSerializer
-
-    @swagger_auto_schema(
-        tags=["Property"],
-        operation_summary="List of mahallas (neighborhoods)",
-        operation_description="All mahallas — for property location and filtering",
-        responses={status.HTTP_200_OK: MahallaListSerializer(many=True)},
-    )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-
 class LocationListView(APIView):
     """
-    Bitta API: region, district, shaharcha va mahalla — hamma joylashuv ma'lumotlari.
-    Response: { "regions": [ { "guid", "title", "img", "districts": [ { "guid", "title", "shaharchas": [...] } ] } ], "mahallas": [ { "guid", "title" } ] }
+    Bitta API: region va district — hamma joylashuv ma'lumotlari.
+    Response: { "regions": [ { "guid", "title", "img", "districts": [ { "guid", "title" } ] } ] }
     """
     permission_classes = [AllowAny]
 
     @swagger_auto_schema(
         tags=["Property"],
-        operation_summary="Location data (regions, districts, shaharchas, mahallas)",
-        operation_description="Single endpoint returning all location data: regions with nested districts and shaharchas, plus flat mahalla list.",
+        operation_summary="Location data (regions, districts)",
+        operation_description="Single endpoint returning all location data: regions with nested districts.",
         responses={status.HTTP_200_OK: openapi.Response(
-            description="regions (nested districts → shaharchas) and mahallas",
+            description="regions with nested districts",
             examples={"application/json": {
-                "regions": [{"guid": "...", "title": "...", "img": "...", "districts": [{"guid": "...", "title": "...", "shaharchas": [{"guid": "...", "title": "..."}]}]}],
-                "mahallas": [{"guid": "...", "title": "..."}],
+                "regions": [{"guid": "...", "title": "...", "img": "...", "districts": [{"guid": "...", "title": "..."}]}],
             }},
         )},
     )
     def get(self, request):
         regions_qs = (
             Region.objects.all()
-            .prefetch_related(
-                Prefetch(
-                    "districts",
-                    queryset=District.objects.all().prefetch_related("shaharchas"),
-                )
-            )
+            .prefetch_related("districts")
             .order_by("title_uz")
         )
-        mahallas_qs = Mahalla.objects.all().order_by("title_uz")
 
         regions_data = LocationRegionSerializer(regions_qs, many=True).data
-        mahallas_data = MahallaListSerializer(mahallas_qs, many=True).data
-
-        return Response({"regions": regions_data, "mahallas": mahallas_data})
+        return Response({"regions": regions_data})
 
 
 RECOMMENDATION_TYPES = ("best-by-reviews", "featured", "most-booked")
@@ -376,7 +309,6 @@ class UnifiedRecommendationsListView(ListAPIView):
             "property_room",
             "region",
             "district",
-            "shaharcha",
         )
 
     def _get_sanatorium_queryset(self, rec_type):
@@ -508,7 +440,6 @@ class CategoryLatestPropertyListView(ListAPIView):
                 "property_room",
                 "region",
                 "district",
-                "shaharcha",
             )
         )
 
@@ -569,7 +500,6 @@ class CategoryPropertyRecommendationView(ListAPIView):
                 "property_room",
                 "region",
                 "district",
-                "shaharcha",
             )
         )
 
@@ -697,7 +627,6 @@ class PropertyListCreateView(ListCreateAPIView):
                 "property_room",
                 "region",
                 "district",
-                "shaharcha",
             )
         )
 
@@ -728,13 +657,13 @@ class PropertyListCreateView(ListCreateAPIView):
             "- `sort` — price_high, price_low, rating_high, rating_low, reviews_high, reviews_low, title_asc, title_desc\n"
             "- `ordering` — `order_price`, `-order_price`, `average_rating`, `-average_rating`, `title`, `comment_count`\n"
             "- `property_type` — property type GUID (GET /api/property/types/)\n"
-            "- `region_id`, `district_id`, `shaharcha_id` — location IDs (GET /api/property/regions/, districts/, shaharchas/)\n"
+            "- `region_id`, `district_id` — location IDs (GET /api/property/regions/, /districts/)\n"
             "- `property_services` — service GUIDs (comma-separated: `uuid1,uuid2`)\n"
             "- `min_price`, `max_price`, `currency` — price range (USD or UZS)\n"
             "- `from_date`, `to_date` — date range\n"
             "- `adults`, `children` — guest counts\n\n"
             "**Response:** Property list (guid, title, price, property_location, property_images, "
-            "region, district, shaharcha, guests, rooms, average_rating, created_at)."
+            "region, district, guests, rooms, average_rating, created_at)."
         ),
         manual_parameters=[
             openapi.Parameter("search", openapi.IN_QUERY, type=openapi.TYPE_STRING, description="Search by title"),
@@ -753,7 +682,6 @@ class PropertyListCreateView(ListCreateAPIView):
             openapi.Parameter("property_type", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
             openapi.Parameter("region_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
             openapi.Parameter("district_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
-            openapi.Parameter("shaharcha_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
             openapi.Parameter(
                 "property_services",
                 openapi.IN_QUERY,
@@ -776,8 +704,7 @@ class PropertyListCreateView(ListCreateAPIView):
             "Partners or admins can create a new property listing. "
             "Newly created properties must be verified before becoming visible.\n\n"
             "Location: use GET /api/property/regions/ → GET /api/property/districts/?region_id=<id> → "
-            "GET /api/property/shaharchas/?district_id=<id> or GET /api/property/districts/<district_id>/shaharchas/ "
-            "and send the GUIDs as **region_id**, **district_id**, **shaharcha_id**; they are stored on the property."
+            "send the GUIDs as **region_id** and **district_id**; they are stored on the property."
         ),
         request_body=PropertyCreateSerializer,
         responses={
@@ -996,7 +923,6 @@ class RegionPropertyListView(PropertyListCreateView):
             openapi.Parameter("sort", openapi.IN_QUERY, type=openapi.TYPE_STRING),
             openapi.Parameter("ordering", openapi.IN_QUERY, type=openapi.TYPE_STRING),
             openapi.Parameter("district_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
-            openapi.Parameter("shaharcha_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
             openapi.Parameter("min_price", openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
             openapi.Parameter("max_price", openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
         ],
@@ -1110,7 +1036,7 @@ class PropertyRetrieveUpdateDestroyView(RetrieveUpdateDestroyAPIView):
         operation_description=(
             "Returns full details of a single verified property by **property_id** (GUID).\n\n"
             "**Response fields:** guid, title, description, price, property_location, property_images, "
-            "property_services, property_room (guests, rooms, beds, bathrooms), region, district, shaharcha, "
+            "property_services, property_room (guests, rooms, beds, bathrooms), region, district, "
             "average_rating, comment_count, check_in, check_out, currency, etc."
         ),
         manual_parameters=[property_id_param],
@@ -1465,7 +1391,7 @@ class PartnerPropertyListView(ListAPIView):
                 ),
             )
             .prefetch_related("property_price", "property_services", "property_images")
-            .select_related("property_location", "property_type", "region", "district", "shaharcha")
+            .select_related("property_location", "property_type", "region", "district")
         )
 
     @swagger_auto_schema(
@@ -1544,7 +1470,6 @@ class SavedPropertyListView(ListAPIView):
                 "property_room",
                 "region",
                 "district",
-                "shaharcha",
             )
         )
 

@@ -10,7 +10,7 @@ from django.utils import timezone
 from django_filters import rest_framework as filters
 from rest_framework.filters import OrderingFilter
 
-from .models import PropertyService, Property, Region, District, Shaharcha, Mahalla
+from .models import PropertyService, Property
 from booking.models import CalendarDate
 from payment.choices import Currency
 from payment.exchange_rate import to_uzs, to_usd
@@ -63,29 +63,11 @@ class PropertyFilter(filters.FilterSet):
     property_type = filters.UUIDFilter(
         field_name="property_type__guid", lookup_expr="exact"
     )
-    region = filters.UUIDFilter(
+    region_id = filters.UUIDFilter(
         field_name="region__guid", lookup_expr="exact", label="region_id"
     )
-    region_id = filters.UUIDFilter(
-        field_name="region__guid", lookup_expr="exact", label="region_id (alias)"
-    )
-    district = filters.UUIDFilter(
-        field_name="district__guid", lookup_expr="exact", label="district_id"
-    )
     district_id = filters.UUIDFilter(
-        field_name="district__guid", lookup_expr="exact", label="district_id (alias)"
-    )
-    shaharcha = filters.UUIDFilter(
-        field_name="shaharcha__guid", lookup_expr="exact", label="shaharcha_id"
-    )
-    shaharcha_id = filters.UUIDFilter(
-        field_name="shaharcha__guid", lookup_expr="exact", label="shaharcha_id (alias)"
-    )
-    mahalla = filters.UUIDFilter(
-        field_name="mahalla__guid", lookup_expr="exact", label="mahalla_id"
-    )
-    mahalla_id = filters.UUIDFilter(
-        field_name="mahalla__guid", lookup_expr="exact", label="mahalla_id (alias)"
+        field_name="district__guid", lookup_expr="exact", label="district_id"
     )
     property_services = filters.CharFilter(
         field_name="property_services",
@@ -106,14 +88,8 @@ class PropertyFilter(filters.FilterSet):
         model = Property
         fields = [
             "property_type",
-            "region",
             "region_id",
-            "district",
             "district_id",
-            "shaharcha",
-            "shaharcha_id",
-            "mahalla",
-            "mahalla_id",
             "property_services",
             "min_price",
             "max_price",

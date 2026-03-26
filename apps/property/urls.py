@@ -18,8 +18,6 @@ from .views import (
     PropertyFavoriteToggleView,
     RegionListView,
     DistrictListView,
-    ShaharchaListView,
-    MahallaListView,
     LocationListView,
     UnifiedRecommendationsListView,
     CategoryListView,
@@ -38,13 +36,6 @@ urlpatterns = [
         name="region-property-list",
     ),
     path("districts/", DistrictListView.as_view(), name="district-list"),
-    path(
-        "districts/<uuid:district_id>/shaharchas/",
-        ShaharchaListView.as_view(),
-        name="shaharcha-by-district",
-    ),
-    path("shaharchas/", ShaharchaListView.as_view(), name="shaharcha-list"),
-    path("mahallas/", MahallaListView.as_view(), name="mahalla-list"),
     path("services/", PropertyServiceListView.as_view(), name="property-service-list"),
     path(
         "recommendations/",
