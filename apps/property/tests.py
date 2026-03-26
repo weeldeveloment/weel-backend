@@ -4,7 +4,7 @@ from datetime import time
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
-from django.urls import resolve, reverse
+from django.urls import resolve, reverse, Resolver404
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
@@ -37,6 +37,8 @@ from property.models import (
     PropertyReview,
     PropertyService,
     PropertyPrice,
+    Region,
+    District,
     VerificationStatus,
 )
 from property.filters import PropertyFilter, PropertyServiceFilter
@@ -46,10 +48,14 @@ logging.getLogger("django.request").setLevel(logging.ERROR)
 
 
 class PropertyUrlTests(TestCase):
-    def test_properties_without_trailing_slash_resolves(self):
-        match = resolve("/api/property/properties")
+    def test_properties_with_trailing_slash_resolves(self):
+        match = resolve("/api/property/properties/")
 
         self.assertIs(match.func.view_class, PropertyListCreateView)
+
+    def test_properties_without_trailing_slash_does_not_resolve(self):
+        with self.assertRaises(Resolver404):
+            resolve("/api/property/properties")
 
     def test_apartments_endpoint_resolves(self):
         match = resolve("/api/property/properties/apartments/")
@@ -143,7 +149,14 @@ class PropertyVerificationRegressionTests(TestCase):
             rate="12000.000000",
         )
 
-    def _create_property_for_list(self, partner, *, is_verified: bool):
+    def _create_property_for_list(
+        self,
+        partner,
+        *,
+        is_verified: bool,
+        region: Region | None = None,
+        district: District | None = None,
+    ):
         property_type = PropertyType.objects.create(
             title_en=f"Apartment {uuid.uuid4().hex[:6]}",
             title_ru="Apartment ru",
@@ -163,6 +176,8 @@ class PropertyVerificationRegressionTests(TestCase):
             property_type=property_type,
             property_location=location,
             partner=partner,
+            region=region,
+            district=district,
             verification_status=VerificationStatus.ACCEPTED if is_verified else VerificationStatus.WAITING,
         )
         PropertyRoom.objects.create(
@@ -296,6 +311,97 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertIn(str(own_verified.guid), guids)
         self.assertIn(str(own_unverified.guid), guids)
         self.assertNotIn(str(other_verified.guid), guids)
+
+    def test_property_list_filters_by_id_alias_with_district_guid(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+
+        region = Region.objects.create(
+            title_en=f"Region {uuid.uuid4().hex[:6]}",
+            title_ru="Region ru",
+            title_uz="Region uz",
+        )
+        district = District.objects.create(
+            region=region,
+            title_en=f"District {uuid.uuid4().hex[:6]}",
+            title_ru="District ru",
+            title_uz=f"District uz {uuid.uuid4().hex[:4]}",
+        )
+
+        matching = self._create_property_for_list(
+            partner,
+            is_verified=True,
+            region=region,
+            district=district,
+        )
+        non_matching = self._create_property_for_list(
+            partner,
+            is_verified=True,
+        )
+
+        request = APIRequestFactory().get(f"/api/property/properties/?id={district.guid}")
+        response = PropertyListCreateView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        guids = {str(item["guid"]) for item in response.data}
+        self.assertIn(str(matching.guid), guids)
+        self.assertNotIn(str(non_matching.guid), guids)
+
+    def test_property_list_with_null_id_returns_empty(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+        self._create_property_for_list(partner, is_verified=True)
+
+        request = APIRequestFactory().get("/api/property/properties/?id=null")
+        response = PropertyListCreateView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 0)
+
+    def test_property_list_with_null_region_id_returns_empty(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+        self._create_property_for_list(partner, is_verified=True)
+
+        request = APIRequestFactory().get("/api/property/properties/?region_id=null")
+        response = PropertyListCreateView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 0)
+
+    def test_property_list_filters_by_region_id_alias(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+
+        region = Region.objects.create(
+            title_en=f"Region {uuid.uuid4().hex[:6]}",
+            title_ru="Region ru",
+            title_uz=f"Region uz {uuid.uuid4().hex[:4]}",
+        )
+        other_region = Region.objects.create(
+            title_en=f"Region {uuid.uuid4().hex[:6]}",
+            title_ru="Region ru",
+            title_uz=f"Region uz {uuid.uuid4().hex[:4]}",
+        )
+
+        matching = self._create_property_for_list(
+            partner,
+            is_verified=True,
+            region=region,
+        )
+        non_matching = self._create_property_for_list(
+            partner,
+            is_verified=True,
+            region=other_region,
+        )
+
+        request = APIRequestFactory().get(f"/api/property/properties/?region_id={region.guid}")
+        response = PropertyListCreateView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        guids = {str(item["guid"]) for item in response.data}
+        self.assertIn(str(matching.guid), guids)
+        self.assertNotIn(str(non_matching.guid), guids)
 
 
 # ──────────────────────────────────────────────
