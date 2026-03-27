@@ -55,7 +55,7 @@ from .models import (
 )
 from payment.choices import Currency
 from payment.exchange_rate import to_uzs
-from shared.date import parse_yyyy_mm_dd, month_start
+from shared.date import parse_yyyy_mm_dd, month_start, month_end
 from booking.models import Booking
 
 
@@ -752,6 +752,20 @@ class PropertyCreateSerializer(
             property.price = self.validate_single_price(price_data)
             property.save(update_fields=["price"])
 
+            # Non-cottages (Apartment va boshqalar) uchun ham PropertyPrice yozuvi yaratiladi,
+            # shunda admin paneldagi Property price jadvalida narx ko'rinadi.
+            today = timezone.now().date()
+            PropertyPrice.objects.update_or_create(
+                property=property,
+                month_from=month_start(today),
+                defaults={
+                    "month_to": month_end(today),
+                    "price_per_person": Decimal("0"),
+                    "price_on_working_days": property.price,
+                    "price_on_weekends": property.price,
+                },
+            )
+
         return property
 
 
@@ -929,6 +943,19 @@ class PropertyUpdateSerializer(
             else:
                 property.price = price_data
                 property_update_fields.add("price")
+
+                # Non-cottages uchun mavjud/current oyga PropertyPrice yozuvini yangilab boramiz
+                today = timezone.now().date()
+                PropertyPrice.objects.update_or_create(
+                    property=property,
+                    month_from=month_start(today),
+                    defaults={
+                        "month_to": month_end(today),
+                        "price_per_person": Decimal("0"),
+                        "price_on_working_days": property.price,
+                        "price_on_weekends": property.price,
+                    },
+                )
             property_updated = True
             update_price = True
 
