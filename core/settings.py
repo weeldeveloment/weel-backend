@@ -461,6 +461,7 @@ CELERY_TASK_ALWAYS_EAGER = DEBUG
 
 # Jwt Token Issuer
 JWT_ISSUER = (os.getenv("JWT_ISSUER") or "weel-backend").strip() or "weel-backend"
+CHAT_DEFAULT_ADMIN_ID = int(os.getenv("CHAT_DEFAULT_ADMIN_ID", "0") or "0") or None
 
 # Test user - OTP so'ralmaydi (development va production)
 TEST_USER_PHONE_NUMBER = (os.getenv("TEST_USER_PHONE_NUMBER") or "").strip() or None

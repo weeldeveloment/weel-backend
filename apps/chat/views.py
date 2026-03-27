@@ -2,7 +2,6 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import BasePermission
-from django.db.models import Q
 from django.contrib.auth import get_user_model
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -12,6 +11,7 @@ from users.models.partners import Partner
 from notification.service import NotificationService
 from .models import Conversation, ChatMessage
 from .serializers import ChatMessageSerializer, ConversationSerializer, ActorSerializer
+from .services import ChatRoutingError, get_bootstrap_conversation_for_partner, get_or_create_conversation_for_message
 
 User = get_user_model()
 
@@ -50,6 +50,7 @@ class ChatViewSet(viewsets.GenericViewSet):
             {
                 "type": event_type,
                 "message": payload,
+                **payload,
             },
         )
 
@@ -91,6 +92,12 @@ class ChatViewSet(viewsets.GenericViewSet):
                 'unread_count': unread_count,
             })
 
+        if is_partner_actor(user) and not conversations:
+            try:
+                conversations.append(get_bootstrap_conversation_for_partner(user))
+            except ChatRoutingError as error:
+                return Response({'error': str(error)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
         serializer = ConversationSerializer(conversations, many=True)
         return Response(serializer.data)
 
@@ -101,12 +108,12 @@ class ChatViewSet(viewsets.GenericViewSet):
 
         conversation = None
         if is_admin_actor(user):
-            partner = Partner.objects.filter(id=partner_id).first()
+            partner = Partner.objects.filter(id=partner_id, is_active=True).first()
             if not partner:
                 return Response({'error': 'Partner not found'}, status=status.HTTP_404_NOT_FOUND)
             conversation, _ = Conversation.objects.get_or_create(admin_user=user, partner=partner)
         elif is_partner_actor(user):
-            admin_user = User.objects.filter(id=partner_id, is_active=True).first()
+            admin_user = User.objects.filter(id=partner_id, is_active=True, is_staff=True).first()
             if not admin_user:
                 return Response({'error': 'Admin user not found'}, status=status.HTTP_404_NOT_FOUND)
             conversation, _ = Conversation.objects.get_or_create(admin_user=admin_user, partner=user)
@@ -114,11 +121,28 @@ class ChatViewSet(viewsets.GenericViewSet):
             return Response({'error': 'Unauthorized actor'}, status=status.HTTP_403_FORBIDDEN)
 
         messages = conversation.messages.order_by('created_at')
-
         if is_admin_actor(user):
-            conversation.messages.filter(receiver_admin=user, is_read=False).update(is_read=True)
+            unread_queryset = conversation.messages.filter(receiver_admin=user, is_read=False)
+            counterpart_id = conversation.partner_id
+            counterpart_type = 'partner'
         else:
-            conversation.messages.filter(receiver_partner=user, is_read=False).update(is_read=True)
+            unread_queryset = conversation.messages.filter(receiver_partner=user, is_read=False)
+            counterpart_id = conversation.admin_user_id
+            counterpart_type = 'admin'
+
+        unread_message_ids = list(unread_queryset.values_list('id', flat=True))
+        if unread_message_ids:
+            unread_queryset.update(is_read=True)
+            self._push_ws_event(
+                counterpart_type,
+                counterpart_id,
+                'messages_read',
+                {
+                    'partner_id': getattr(user, 'id', None),
+                    'partner_type': 'admin' if is_admin_actor(user) else 'partner',
+                    'message_ids': unread_message_ids,
+                },
+            )
 
         serializer = ChatMessageSerializer(messages, many=True)
         return Response(serializer.data)
@@ -127,42 +151,44 @@ class ChatViewSet(viewsets.GenericViewSet):
     def send(self, request):
         """Send a message to counterpart actor."""
         receiver_id = request.data.get('receiver_id')
+        receiver_type = request.data.get('receiver_type')
         content = request.data.get('content', '').strip()
 
-        if not receiver_id or not content:
+        if not receiver_id or not receiver_type or not content:
             return Response(
-                {'error': 'receiver_id and content are required'},
+                {'error': 'receiver_id, receiver_type and content are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         sender = request.user
+        if not is_admin_actor(sender) and not is_partner_actor(sender):
+            return Response({'error': 'Unauthorized actor'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            conversation, admin_user, partner = get_or_create_conversation_for_message(
+                sender_type='admin' if is_admin_actor(sender) else 'partner',
+                sender_id=sender.id,
+                receiver_id=int(receiver_id),
+                receiver_type=str(receiver_type),
+            )
+        except ChatRoutingError as error:
+            status_code = status.HTTP_404_NOT_FOUND if 'not found' in str(error).lower() else status.HTTP_400_BAD_REQUEST
+            return Response({'error': str(error)}, status=status_code)
+
         if is_admin_actor(sender):
-            partner = Partner.objects.filter(id=receiver_id).first()
-            if not partner:
-                return Response({'error': 'Partner not found'}, status=status.HTTP_404_NOT_FOUND)
-            conversation, _ = Conversation.objects.get_or_create(admin_user=sender, partner=partner)
             message = ChatMessage.objects.create(
                 conversation=conversation,
                 sender_admin=sender,
                 receiver_partner=partner,
                 content=content,
             )
-        elif is_partner_actor(sender):
-            admin_user = User.objects.filter(id=receiver_id, is_active=True).first()
-            if not admin_user:
-                admin_user = User.objects.filter(is_active=True, is_staff=True).order_by('id').first()
-            if not admin_user:
-                return Response({'error': 'No admin user available'}, status=status.HTTP_400_BAD_REQUEST)
-
-            conversation, _ = Conversation.objects.get_or_create(admin_user=admin_user, partner=sender)
+        else:
             message = ChatMessage.objects.create(
                 conversation=conversation,
                 sender_partner=sender,
                 receiver_admin=admin_user,
                 content=content,
             )
-        else:
-            return Response({'error': 'Unauthorized actor'}, status=status.HTTP_403_FORBIDDEN)
 
         conversation.save(update_fields=['updated_at'])
         serializer = ChatMessageSerializer(message)
