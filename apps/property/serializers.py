@@ -177,6 +177,51 @@ class PropertyImageSerializer(serializers.ModelSerializer):
         return {"detail": "Your image(s) are pending approval", "status": "pending"}
 
 
+class PropertyAnalyticsPropertySerializer(serializers.Serializer):
+    guid = serializers.UUIDField()
+    title = serializers.CharField()
+    image_url = serializers.CharField(allow_null=True, allow_blank=True)
+    city = serializers.CharField(allow_blank=True, allow_null=True)
+
+
+class PropertyAnalyticsDistributionSerializer(serializers.Serializer):
+    income_percent = serializers.IntegerField()
+    bookings_percent = serializers.IntegerField()
+    cancellations_percent = serializers.IntegerField()
+
+
+class PropertyAnalyticsOverviewSerializer(serializers.Serializer):
+    comparison_percent = serializers.FloatField()
+    booked_count = serializers.IntegerField()
+    booked_change_percent = serializers.FloatField()
+    cancelled_count = serializers.IntegerField()
+    cancelled_change_percent = serializers.FloatField()
+    no_show_count = serializers.IntegerField()
+    no_show_change_percent = serializers.FloatField()
+    cancelled_after_booking_count = serializers.IntegerField()
+    cancelled_after_booking_change_percent = serializers.FloatField()
+    distribution = PropertyAnalyticsDistributionSerializer()
+
+
+class PropertyAnalyticsPointSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    value = serializers.IntegerField()
+
+
+class PropertyAnalyticsIncomeOverviewSerializer(serializers.Serializer):
+    balance_amount = serializers.CharField()
+    currency = serializers.CharField()
+    bars = PropertyAnalyticsPointSerializer(many=True)
+
+
+class PropertyAnalyticsSerializer(serializers.Serializer):
+    property = PropertyAnalyticsPropertySerializer()
+    range = serializers.CharField()
+    bookings_overview = PropertyAnalyticsOverviewSerializer()
+    bookings_activity = PropertyAnalyticsPointSerializer(many=True)
+    income_overview = PropertyAnalyticsIncomeOverviewSerializer()
+
+
 class PropertyListSerializer(serializers.ModelSerializer):
     price = serializers.SerializerMethodField("get_price")
     property_location = PropertyLocationSerializer()

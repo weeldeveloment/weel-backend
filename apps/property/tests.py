@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import time
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.test import APIRequestFactory, APIClient, force_authenticate
 
 from booking.serializers import PropertyBookingSerializer
+from booking.models import Booking, BookingPrice
 from payment.models import ExchangeRate
 from property.serializers import (
     PropertyPatchSerializer,
@@ -23,6 +24,7 @@ from property.views import (
     PropertyListCreateView,
     ApartmentPropertyListCreateView,
     CottagePropertyListCreateView,
+    PartnerPropertyAnalyticsView,
     PropertyTypeListView,
     PropertyServiceListView,
     PropertyRetrieveUpdateDestroyView,
@@ -66,6 +68,153 @@ class PropertyUrlTests(TestCase):
         match = resolve("/api/property/properties/cottages/")
 
         self.assertIs(match.func.view_class, CottagePropertyListCreateView)
+
+    def test_partner_property_analytics_endpoint_resolves(self):
+        match = resolve(f"/api/property/partner/properties/{uuid.uuid4()}/analytics/")
+
+        self.assertIs(match.func.view_class, PartnerPropertyAnalyticsView)
+
+
+@override_settings(MEDIA_ROOT="/tmp/weel-test-media")
+class PartnerPropertyAnalyticsTests(TestCase):
+    def _svg_file(self, name="icon.svg"):
+        return SimpleUploadedFile(
+            name,
+            b'<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+            content_type="image/svg+xml",
+        )
+
+    def _create_partner(self, username_prefix="partner"):
+        suffix = uuid.uuid4().hex[:8]
+        return Partner.objects.create(
+            first_name="John",
+            last_name="Doe",
+            username=f"{username_prefix}_{suffix}",
+            phone_number=f"+99890{uuid.uuid4().int % 10**7:07d}",
+            is_active=True,
+        )
+
+    def _create_property(self, partner: Partner):
+        property_type = PropertyType.objects.create(
+            title_en="Apartment",
+            title_ru="Квартира",
+            title_uz="Kvartira",
+            icon=self._svg_file(),
+        )
+        location = PropertyLocation.objects.create(
+            latitude="41.2995",
+            longitude="69.2401",
+            city="Tashkent",
+            country="Uzbekistan",
+        )
+        property_obj = Property.objects.create(
+            title=f"Stats property {uuid.uuid4().hex[:6]}",
+            price="100.00",
+            currency="UZS",
+            property_type=property_type,
+            property_location=location,
+            partner=partner,
+            verification_status=VerificationStatus.ACCEPTED,
+        )
+        PropertyDetail.objects.create(
+            property=property_obj,
+            description_en="Description",
+            description_ru="Description ru",
+            description_uz="Tavsif",
+        )
+        PropertyRoom.objects.create(property=property_obj, guests=2, rooms=1, beds=1, bathrooms=1)
+        return property_obj
+
+    def _create_booking(self, property_obj: Property, *, status: str, created_at: datetime, completed_at=None, cancelled_at=None, confirmed_at=None, cancellation_reason=None, charge_amount="100000.00"):
+        client = Client.objects.create(
+            first_name="Client",
+            last_name=uuid.uuid4().hex[:4],
+            phone_number=f"+99891{uuid.uuid4().int % 10**7:07d}",
+            is_active=True,
+        )
+        booking = Booking.objects.create(
+            client=client,
+            property=property_obj,
+            check_in=created_at.date() + timedelta(days=2),
+            check_out=created_at.date() + timedelta(days=4),
+            adults=2,
+            status=status,
+            cancellation_reason=cancellation_reason,
+            confirmed_at=confirmed_at,
+            cancelled_at=cancelled_at,
+            completed_at=completed_at,
+        )
+        Booking.objects.filter(pk=booking.pk).update(created_at=created_at)
+        booking.refresh_from_db()
+        BookingPrice.objects.create(
+            booking=booking,
+            subtotal=Decimal("1000000.00"),
+            hold_amount=Decimal("200000.00"),
+            charge_amount=Decimal(charge_amount),
+            service_fee=Decimal("200000.00"),
+            service_fee_percentage=20,
+        )
+        return booking
+
+    def test_owner_can_fetch_property_analytics(self):
+        partner = self._create_partner()
+        property_obj = self._create_property(partner)
+        today = timezone.now()
+
+        self._create_booking(
+            property_obj,
+            status=Booking.BookingStatus.COMPLETED,
+            created_at=today - timedelta(days=1),
+            completed_at=today - timedelta(days=1),
+            confirmed_at=today - timedelta(days=2),
+            charge_amount="150000.00",
+        )
+        self._create_booking(
+            property_obj,
+            status=Booking.BookingStatus.CANCELLED,
+            created_at=today - timedelta(days=2),
+            cancelled_at=today - timedelta(days=1),
+            confirmed_at=today - timedelta(days=2),
+            cancellation_reason=Booking.BookingCancellationReason.PARTNER_CANCELLED,
+        )
+        self._create_booking(
+            property_obj,
+            status=Booking.BookingStatus.CANCELLED,
+            created_at=today - timedelta(days=3),
+            cancelled_at=today - timedelta(days=1),
+            cancellation_reason=Booking.BookingCancellationReason.USER_NO_SHOW,
+        )
+
+        request = APIRequestFactory().get(
+            f"/api/property/partner/properties/{property_obj.guid}/analytics/?range=month"
+        )
+        force_authenticate(request, user=partner)
+
+        response = PartnerPropertyAnalyticsView.as_view()(request, property_id=property_obj.guid)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["property"]["guid"], property_obj.guid)
+        self.assertEqual(response.data["range"], "month")
+        self.assertEqual(response.data["bookings_overview"]["booked_count"], 3)
+        self.assertEqual(response.data["bookings_overview"]["cancelled_count"], 1)
+        self.assertEqual(response.data["bookings_overview"]["no_show_count"], 1)
+        self.assertEqual(response.data["bookings_overview"]["cancelled_after_booking_count"], 1)
+        self.assertEqual(response.data["income_overview"]["currency"], "UZS")
+        self.assertEqual(response.data["income_overview"]["balance_amount"], "150000.00")
+
+    def test_partner_cannot_fetch_other_partners_property_analytics(self):
+        owner = self._create_partner("owner")
+        other_partner = self._create_partner("other")
+        property_obj = self._create_property(owner)
+
+        request = APIRequestFactory().get(
+            f"/api/property/partner/properties/{property_obj.guid}/analytics/?range=month"
+        )
+        force_authenticate(request, user=other_partner)
+
+        response = PartnerPropertyAnalyticsView.as_view()(request, property_id=property_obj.guid)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 @override_settings(MEDIA_ROOT="/tmp/weel-test-media")

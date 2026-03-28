@@ -14,6 +14,7 @@ from .views import (
     PropertyRetrieveUpdateDestroyView,
     PartnerPropertyReviewListView,
     PartnerPropertyListView,
+    PartnerPropertyAnalyticsView,
     SavedPropertyListView,
     PropertyFavoriteToggleView,
     RegionListView,
@@ -75,6 +76,11 @@ urlpatterns = [
         name="property-filter-by-link",
     ),
     path("partner/properties/", PartnerPropertyListView.as_view(), name="partner-property-list"),
+    path(
+        "partner/properties/<uuid:property_id>/analytics/",
+        PartnerPropertyAnalyticsView.as_view(),
+        name="partner-property-analytics",
+    ),
     path(
         "properties/<uuid:property_id>/",
         PropertyRetrieveUpdateDestroyView.as_view(),
