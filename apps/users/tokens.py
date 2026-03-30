@@ -9,7 +9,6 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from .models.clients import Client, ClientSession
 from .models.partners import Partner, PartnerSession
-from django.db.utils import ProgrammingError
 
 
 class CustomRefreshToken(RefreshToken):
@@ -51,26 +50,10 @@ def create_client_session(client: Client, request: Request):
     device_id = request.META.get("HTTP_X_DEVICE_ID")
     last_ip = get_user_ip(request)
 
-    try:
-        session = ClientSession.objects.create(
-            client=client, device_id=device_id, user_agent=user_agent, last_ip=last_ip
-        )
-        return session
-    except ProgrammingError:
-        # Legacy table may be missing in production → fallback to norm_client_sessions
-        from norm_store.sync import ensure_norm_customer
-        from norm_store.models import NormClientSession
-
-        nc = ensure_norm_customer(client)
-        if not nc:
-            return None
-        NormClientSession.objects.create(
-            client=nc,
-            device_id=device_id,
-            user_agent=user_agent,
-            last_ip=last_ip,
-        )
-        return None
+    session = ClientSession.objects.create(
+        client=client, device_id=device_id, user_agent=user_agent, last_ip=last_ip
+    )
+    return session
 
 
 
@@ -104,26 +87,10 @@ def create_partner_session(partner: Partner, request: Request):
     device_id = request.META.get("HTTP_X_DEVICE_ID")
     last_ip = get_user_ip(request)
 
-    try:
-        session = PartnerSession.objects.create(
-            partner=partner, device_id=device_id, user_agent=user_agent, last_ip=last_ip
-        )
-        return session
-    except ProgrammingError:
-        # Legacy table may be missing in production → fallback to norm_partner_sessions
-        from norm_store.sync import ensure_norm_partner
-        from norm_store.models import NormPartnerSession
-
-        np = ensure_norm_partner(partner)
-        if not np:
-            return None
-        NormPartnerSession.objects.create(
-            partner=np,
-            device_id=device_id,
-            user_agent=user_agent,
-            last_ip=last_ip,
-        )
-        return None
+    session = PartnerSession.objects.create(
+        partner=partner, device_id=device_id, user_agent=user_agent, last_ip=last_ip
+    )
+    return session
 
 
 def create_partner_tokens(partner: Partner, request: Request):

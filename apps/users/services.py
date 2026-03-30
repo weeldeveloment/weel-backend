@@ -28,8 +28,6 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN_APP")
 
 # If legacy tables are missing in production, we fallback to norm storage.
 # Avoid spamming logs on every device registration attempt.
-_clientdevice_table_missing_logged = False
-
 
 class EskizService:
     ESKIZ_TOKEN_KEY = "eskiz_service_token"
@@ -489,7 +487,6 @@ class ClientDeviceService:
         fcm_token: str,
         device_type: str,
     ):
-        global _clientdevice_table_missing_logged
         if not fcm_token:
             logger.warning(
                 "Client device registration skipped: empty token. client_id=%s device_type=%s",
@@ -497,35 +494,6 @@ class ClientDeviceService:
                 device_type,
             )
             return None
-
-        use_norm = getattr(settings, "USE_NORM_DATASTORE", False)
-        if use_norm:
-            from norm_store.sync import ensure_norm_customer
-            from norm_store.models import NormClientDevice
-
-            nc = ensure_norm_customer(client)
-            if not nc:
-                return None
-            token = fcm_token[:255]
-            dt = (device_type or "")[:10]
-            deactivated_count = NormClientDevice.objects.filter(
-                client=nc, device_type=dt, is_active=True
-            ).exclude(fcm_token=token).update(is_active=False)
-            client_device, created = NormClientDevice.objects.update_or_create(
-                fcm_token=token,
-                defaults={
-                    "client": nc,
-                    "device_type": dt,
-                    "is_active": True,
-                },
-            )
-            logger.info(
-                "Client device registered (norm). client_id=%s device_id=%s created=%s",
-                getattr(client, "id", None),
-                getattr(client_device, "id", None),
-                created,
-            )
-            return client_device
 
         try:
             deactivated_count = ClientDevice.objects.filter(
@@ -552,31 +520,8 @@ class ClientDeviceService:
                 f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
             )
             return client_device
-        except ProgrammingError as exc:
-            # If legacy table is missing in production, fallback to norm tables automatically.
-            if 'relation "client_devices" does not exist' in str(exc) or 'relation "users_clientdevice" does not exist' in str(exc):
-                if not _clientdevice_table_missing_logged:
-                    _clientdevice_table_missing_logged = True
-                    logger.warning(
-                        "ClientDevice legacy table is missing; using norm storage fallback.",
-                        extra={"client_id": getattr(client, "id", None)},
-                    )
-                from norm_store.sync import ensure_norm_customer
-                from norm_store.models import NormClientDevice
-
-                nc = ensure_norm_customer(client)
-                if not nc:
-                    return None
-                token = fcm_token[:255]
-                dt = (device_type or "")[:10]
-                NormClientDevice.objects.filter(
-                    client=nc, device_type=dt, is_active=True
-                ).exclude(fcm_token=token).update(is_active=False)
-                client_device, _ = NormClientDevice.objects.update_or_create(
-                    fcm_token=token,
-                    defaults={"client": nc, "device_type": dt, "is_active": True},
-                )
-                return client_device
+        except ProgrammingError:
+            # Surface schema issues immediately instead of falling back to norm_ tables
             raise
 
 
@@ -595,89 +540,30 @@ class PartnerDeviceService:
             )
             return None
 
-        try:
-            use_norm = getattr(settings, "USE_NORM_DATASTORE", False)
-            if use_norm:
-                from norm_store.sync import ensure_norm_partner
-                from norm_store.models import NormPartnerDevice
+        deactivated_count = PartnerDevice.objects.filter(
+            partner=partner,
+            device_type=device_type,
+            is_active=True,
+        ).exclude(fcm_token=fcm_token).update(is_active=False)
 
-                np = ensure_norm_partner(partner)
-                if not np:
-                    return None
-                token = fcm_token[:255]
-                dt = (device_type or "")[:10]
-                deactivated_count = NormPartnerDevice.objects.filter(
-                    partner=np, device_type=dt, is_active=True
-                ).exclude(fcm_token=token).update(is_active=False)
-                partner_device, created = NormPartnerDevice.objects.update_or_create(
-                    fcm_token=token,
-                    defaults={
-                        "partner": np,
-                        "device_type": dt,
-                        "is_active": True,
-                    },
-                )
-                logger.info(
-                    "Partner device registered (norm). partner_id=%s device_id=%s created=%s",
-                    getattr(partner, "id", None),
-                    getattr(partner_device, "id", None),
-                    created,
-                )
-                return partner_device
-
-            deactivated_count = PartnerDevice.objects.filter(
-                partner=partner,
-                device_type=device_type,
-                is_active=True,
-            ).exclude(fcm_token=fcm_token).update(is_active=False)
-
-            partner_device, created = PartnerDevice.objects.update_or_create(
-                fcm_token=fcm_token,
-                defaults={
-                    "partner": partner,
-                    "device_type": device_type,
-                    "is_active": True,
-                },
-            )
-            logger.info(
-                "Partner device registered. partner_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
-                getattr(partner, "id", None),
-                getattr(partner_device, "id", None),
-                created,
-                device_type,
-                deactivated_count,
-                f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
-            )
-            return partner_device
-        except ProgrammingError as exc:
-            error_text = str(exc)
-            missing_partner_device_table = (
-                'relation "norm_partner_devices" does not exist' in error_text
-                or 'relation "partner_devices" does not exist' in error_text
-                or 'relation "users_partnerdevice" does not exist' in error_text
-            )
-            if missing_partner_device_table:
-                logger.error(
-                    "PartnerDevice table is missing, falling back to norm storage.",
-                    extra={"partner_id": getattr(partner, "id", None)},
-                )
-                from norm_store.sync import ensure_norm_partner
-                from norm_store.models import NormPartnerDevice
-
-                np = ensure_norm_partner(partner)
-                if not np:
-                    return None
-                token = fcm_token[:255]
-                dt = (device_type or "")[:10]
-                NormPartnerDevice.objects.filter(
-                    partner=np, device_type=dt, is_active=True
-                ).exclude(fcm_token=token).update(is_active=False)
-                partner_device, _ = NormPartnerDevice.objects.update_or_create(
-                    fcm_token=token,
-                    defaults={"partner": np, "device_type": dt, "is_active": True},
-                )
-                return partner_device
-            raise
+        partner_device, created = PartnerDevice.objects.update_or_create(
+            fcm_token=fcm_token,
+            defaults={
+                "partner": partner,
+                "device_type": device_type,
+                "is_active": True,
+            },
+        )
+        logger.info(
+            "Partner device registered. partner_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
+            getattr(partner, "id", None),
+            getattr(partner_device, "id", None),
+            created,
+            device_type,
+            deactivated_count,
+            f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
+        )
+        return partner_device
 
 
 class TelegramService:
