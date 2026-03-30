@@ -138,7 +138,7 @@ class PartnerDevice(HardDeleteBaseModel):
     is_active = models.BooleanField(default=True, verbose_name=_("Active"))
 
     class Meta:
-        db_table = "norm_partner_devices"
+        db_table = "partner_devices"
         verbose_name = _("Partner device")
         verbose_name_plural = _("Partner devices")
 

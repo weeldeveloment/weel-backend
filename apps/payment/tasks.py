@@ -44,24 +44,15 @@ def update_exchange_rate():
     rate = _extract_usd_to_uzs_rate(response.json())
 
     try:
-        if getattr(settings, "USE_NORM_DATASTORE", False):
-            from norm_store.models import NormExchangeRate
-
-            NormExchangeRate.objects.update_or_create(
-                currency="USD",
-                date=date.today(),
-                defaults={"rate": rate},
-            )
-        else:
-            ExchangeRate.objects.update_or_create(
-                currency="USD",
-                date=date.today(),
-                defaults={"rate": rate},
-            )
+        ExchangeRate.objects.update_or_create(
+            currency="USD",
+            date=date.today(),
+            defaults={"rate": rate},
+        )
     except (ProgrammingError, OperationalError):
         logger.exception(
             "Skipping exchange-rate DB persistence because required table is missing. "
-            "Run migrations for payment (and norm_store if enabled)."
+            "Run migrations for payment."
         )
 
     cache.set("usd_to_uzs_rate", rate, timeout=86400)  # 86400 - 24 hours

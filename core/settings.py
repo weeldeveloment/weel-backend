@@ -79,7 +79,7 @@ GLOBAL_APPS = [
     "django.contrib.staticfiles",
 ]
 
-USE_NORM_DATASTORE = env_bool("USE_NORM_DATASTORE", default=False)
+USE_NORM_DATASTORE = False  # Explicitly disable norm_* datastore usage
 
 LOCAL_APPS = [
     "users",
@@ -88,7 +88,6 @@ LOCAL_APPS = [
     "property",
     "stories",
     "booking",
-    "norm_store.apps.NormStoreConfig",
     "notification",
     "bot",
     "sanatorium",

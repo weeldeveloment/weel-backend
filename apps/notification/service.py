@@ -1,8 +1,6 @@
 import logging
 
-from django.conf import settings
 from firebase_admin import messaging
-from django.db.utils import ProgrammingError
 
 from users.models import Client
 from users.models.partners import Partner
@@ -29,25 +27,12 @@ class FCMService:
         from users.models.clients import ClientDevice
         from users.models.partners import PartnerDevice
 
-        try:
-            if getattr(settings, "USE_NORM_DATASTORE", False):
-                from norm_store.models import NormClientDevice, NormPartnerDevice
-
-                NormClientDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
-                    is_active=False
-                )
-                NormPartnerDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
-                    is_active=False
-                )
-            else:
-                ClientDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
-                    is_active=False
-                )
-                PartnerDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
-                    is_active=False
-                )
-        except ProgrammingError as exc:
-            logger.error("Skipping invalid token deactivation due to missing table: %s", exc)
+        ClientDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
+            is_active=False
+        )
+        PartnerDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
+            is_active=False
+        )
 
     @staticmethod
     def send_to_tokens(
@@ -171,28 +156,9 @@ class NotificationService:
             is_for_every_one=False,
         )
 
-        try:
-            if getattr(settings, "USE_NORM_DATASTORE", False):
-                from norm_store.models import NormClientDevice
-                from norm_store.sync import ensure_norm_customer
-
-                nc = ensure_norm_customer(client)
-                tokens = (
-                    list(
-                        NormClientDevice.objects.filter(client=nc, is_active=True).values_list(
-                            "fcm_token", flat=True
-                        )
-                    )
-                    if nc
-                    else []
-                )
-            else:
-                tokens = list(
-                    client.devices.filter(is_active=True).values_list("fcm_token", flat=True),
-                )
-        except ProgrammingError as exc:
-            logger.error("Unable to load client device tokens due to database schema mismatch: %s", exc)
-            tokens = []
+        tokens = list(
+            client.devices.filter(is_active=True).values_list("fcm_token", flat=True),
+        )
 
         logger.info(
             "Client notification tokens loaded. client_id=%s tokens_total=%s",
@@ -266,28 +232,9 @@ class NotificationService:
             )
 
         # Send push notification
-        try:
-            if getattr(settings, "USE_NORM_DATASTORE", False):
-                from norm_store.models import NormPartnerDevice
-                from norm_store.sync import ensure_norm_partner
-
-                np = ensure_norm_partner(partner)
-                tokens = (
-                    list(
-                        NormPartnerDevice.objects.filter(partner=np, is_active=True).values_list(
-                            "fcm_token", flat=True
-                        )
-                    )
-                    if np
-                    else []
-                )
-            else:
-                tokens = list(
-                    partner.devices.filter(is_active=True).values_list("fcm_token", flat=True),
-                )
-        except ProgrammingError as exc:
-            logger.error("Unable to load partner device tokens due to database schema mismatch: %s", exc)
-            tokens = []
+        tokens = list(
+            partner.devices.filter(is_active=True).values_list("fcm_token", flat=True),
+        )
 
         logger.info(
             "Partner notification tokens loaded. partner_id=%s tokens_total=%s",
