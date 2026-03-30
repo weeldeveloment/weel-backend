@@ -173,6 +173,29 @@ def _is_null_like_param(value: str | None) -> bool:
     return str(value).strip().lower() in {"", "null", "none", "undefined"}
 
 
+def _resolve_sort_reference_date(raw_from_date: str | None, default_date: date) -> date:
+    if not raw_from_date:
+        return default_date
+    try:
+        return date.fromisoformat(str(raw_from_date).strip())
+    except (TypeError, ValueError):
+        return default_date
+
+
+def _cottage_price_expression(price_field: str, reference_date: date):
+    return Coalesce(
+        Min(
+            price_field,
+            filter=Q(
+                property_price__month_from__lte=reference_date,
+                property_price__month_to__gte=reference_date,
+            ),
+        ),
+        Min(price_field),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+
 class DistrictListView(ListAPIView):
     """Tuman/shahar roʻyxati — ixtiyoriy filter: region_id (viloyat guid)."""
     serializer_class = DistrictListSerializer
@@ -607,7 +630,11 @@ class PropertyListCreateView(ListCreateAPIView):
         rate = exchange_rate()
 
         today = date.today()
-        is_weekend = today.weekday() >= 4  # Fri-Sun
+        sort_reference_date = _resolve_sort_reference_date(
+            self.request.query_params.get("from_date"),
+            today,
+        )
+        is_weekend = sort_reference_date.weekday() >= 4  # Fri-Sun
 
         cottage_type = (
             PropertyType.objects.filter(title_en="Cottages").values_list("id", flat=True).first()
@@ -635,7 +662,10 @@ class PropertyListCreateView(ListCreateAPIView):
         property = (
             base_qs
             .annotate(
-                cottage_price=Min(property_price_fields),
+                cottage_price=_cottage_price_expression(
+                    property_price_fields,
+                    sort_reference_date,
+                ),
                 average_rating=Coalesce(
                     Avg(
                         "property_review__rating",
@@ -1402,7 +1432,11 @@ class PartnerPropertyListView(ListAPIView):
         rate = exchange_rate()
 
         today = date.today()
-        is_weekend = today.weekday() >= 4
+        sort_reference_date = _resolve_sort_reference_date(
+            self.request.query_params.get("from_date"),
+            today,
+        )
+        is_weekend = sort_reference_date.weekday() >= 4
 
         cottage_type = (
             PropertyType.objects.filter(title_en="Cottages").values_list("id", flat=True).first()
@@ -1423,7 +1457,10 @@ class PartnerPropertyListView(ListAPIView):
         return (
             base_qs
             .annotate(
-                cottage_price=Min(property_price_fields),
+                cottage_price=_cottage_price_expression(
+                    property_price_fields,
+                    sort_reference_date,
+                ),
                 average_rating=Coalesce(
                     Avg(
                         "property_review__rating",
@@ -1483,7 +1520,11 @@ class SavedPropertyListView(ListAPIView):
     def get_queryset(self):
         rate = exchange_rate()
         today = date.today()
-        is_weekend = today.weekday() >= 4
+        sort_reference_date = _resolve_sort_reference_date(
+            self.request.query_params.get("from_date"),
+            today,
+        )
+        is_weekend = sort_reference_date.weekday() >= 4
         cottage_type = (
             PropertyType.objects.filter(title_en="Cottages").values_list("id", flat=True).first()
         )
@@ -1499,7 +1540,10 @@ class SavedPropertyListView(ListAPIView):
         return (
             base_qs
             .annotate(
-                cottage_price=Min(property_price_fields),
+                cottage_price=_cottage_price_expression(
+                    property_price_fields,
+                    sort_reference_date,
+                ),
                 average_rating=Coalesce(
                     Avg(
                         "property_review__rating",
