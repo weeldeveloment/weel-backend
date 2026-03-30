@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
 from django.core.cache import cache
-from django.db.models import Q
+from django.db.models import Q, F
 from django.utils import timezone
 from django_filters import rest_framework as filters
 from rest_framework.filters import OrderingFilter
@@ -57,6 +57,23 @@ class PropertyOrderingFilter(OrderingFilter):
         if sort and sort in SORT_TO_ORDERING:
             return SORT_TO_ORDERING[sort]
         return super().get_ordering(request, queryset, view)
+
+    def filter_queryset(self, request, queryset, view):
+        ordering = self.get_ordering(request, queryset, view)
+        if not ordering:
+            return queryset
+
+        normalized_ordering = []
+        for field in ordering:
+            if field.lstrip("-") == "order_price":
+                if field.startswith("-"):
+                    normalized_ordering.append(F("order_price").desc(nulls_last=True))
+                else:
+                    normalized_ordering.append(F("order_price").asc(nulls_last=True))
+            else:
+                normalized_ordering.append(field)
+
+        return queryset.order_by(*normalized_ordering)
 
 
 class PropertyFilter(filters.FilterSet):

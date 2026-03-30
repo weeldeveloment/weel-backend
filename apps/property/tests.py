@@ -26,6 +26,7 @@ from property.views import (
     PropertyTypeListView,
     PropertyServiceListView,
     PropertyRetrieveUpdateDestroyView,
+    PartnerPropertyListView,
 )
 from property.models import (
     Property,
@@ -311,6 +312,69 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertIn(str(own_verified.guid), guids)
         self.assertIn(str(own_unverified.guid), guids)
         self.assertNotIn(str(other_verified.guid), guids)
+
+    def test_partner_properties_sort_price_high_returns_descending(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+
+        cheaper = self._create_property_for_list(partner, is_verified=True)
+        expensive = self._create_property_for_list(partner, is_verified=True)
+
+        Property.objects.filter(pk=cheaper.pk).update(
+            price=Decimal("1000000.00"),
+            currency="UZS",
+        )
+        Property.objects.filter(pk=expensive.pk).update(
+            price=Decimal("2000000.00"),
+            currency="UZS",
+        )
+
+        request = APIRequestFactory().get("/api/property/partner/properties/?sort=price_high")
+        force_authenticate(request, user=partner)
+        response = PartnerPropertyListView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        guids = [str(item["guid"]) for item in response.data]
+        self.assertGreaterEqual(len(guids), 2)
+        self.assertEqual(guids[0], str(expensive.guid))
+        self.assertEqual(guids[1], str(cheaper.guid))
+
+    def test_partner_properties_endpoint_allows_anonymous(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+
+        verified = self._create_property_for_list(partner, is_verified=True)
+        unverified = self._create_property_for_list(partner, is_verified=False)
+
+        request = APIRequestFactory().get("/api/property/partner/properties/")
+        response = PartnerPropertyListView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        guids = {str(item["guid"]) for item in response.data}
+        self.assertIn(str(verified.guid), guids)
+        self.assertNotIn(str(unverified.guid), guids)
+
+    def test_partner_properties_sort_price_high_puts_null_prices_last(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+
+        expensive = self._create_property_for_list(partner, is_verified=True)
+        cheaper = self._create_property_for_list(partner, is_verified=True)
+        no_price = self._create_property_for_list(partner, is_verified=True)
+
+        Property.objects.filter(pk=expensive.pk).update(price=Decimal("2000000.00"), currency="UZS")
+        Property.objects.filter(pk=cheaper.pk).update(price=Decimal("1000000.00"), currency="UZS")
+        Property.objects.filter(pk=no_price.pk).update(price=None)
+
+        request = APIRequestFactory().get("/api/property/partner/properties/?sort=price_high")
+        force_authenticate(request, user=partner)
+        response = PartnerPropertyListView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        guids = [str(item["guid"]) for item in response.data]
+        self.assertEqual(guids[0], str(expensive.guid))
+        self.assertEqual(guids[1], str(cheaper.guid))
+        self.assertEqual(guids[-1], str(no_price.guid))
 
     def test_property_list_filters_by_id_alias_with_district_guid(self):
         self._ensure_property_list_context()

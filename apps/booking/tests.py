@@ -478,11 +478,11 @@ class BookingPriceServiceTests(BookingTestMixin, TestCase):
     def test_calculate_returns_expected_keys(self):
         prop = self.make_property()
         from shared.date import month_start
-        from dateutil.relativedelta import relativedelta
         today = date.today()
         month_start_date = month_start(today)
         self.make_property_price(prop, month_start_date)
-        check_in = today + timedelta(days=1)
+        # Keep test dates inside the same month to avoid month-boundary flakiness.
+        check_in = month_start_date + timedelta(days=10)
         check_out = check_in + timedelta(days=2)
         service = BookingPriceService()
         result = service.calculate(

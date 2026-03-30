@@ -12,7 +12,7 @@ from drf_yasg.utils import swagger_auto_schema
 
 from rest_framework import status, parsers
 from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.filters import SearchFilter
 from rest_framework.permissions import (
     AllowAny,
 )
@@ -1384,10 +1384,10 @@ class PartnerPropertyReviewListView(ListAPIView):
 
 
 class PartnerPropertyListView(ListAPIView):
-    authentication_classes = [PartnerJWTAuthentication]
-    permission_classes = [IsPartner]
+    authentication_classes = []
+    permission_classes = [AllowAny]
     serializer_class = PartnerPropertyListSerializer
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter, PropertyOrderingFilter]
     filterset_class = PropertyFilter
     search_fields = ["title"]
     ordering_fields = [
@@ -1414,8 +1414,14 @@ class PartnerPropertyListView(ListAPIView):
             else "property_price__price_on_working_days"
         )
 
-        return (
+        base_qs = (
             Property.objects.filter(partner=self.request.user)
+            if isinstance(self.request.user, Partner)
+            else Property.objects.filter(is_verified=True)
+        )
+
+        return (
+            base_qs
             .annotate(
                 cottage_price=Min(property_price_fields),
                 average_rating=Coalesce(
@@ -1458,7 +1464,10 @@ class PartnerPropertyListView(ListAPIView):
     @swagger_auto_schema(
         tags=["Property"],
         operation_summary="Retrieve partner's own properties",
-        operation_description="Retrieve all properties created by the authenticated partner (including unverified)",
+        operation_description=(
+            "If authenticated as partner: returns partner's own properties (including unverified). "
+            "If unauthenticated: returns only verified properties."
+        ),
         responses={status.HTTP_200_OK: PartnerPropertyListSerializer(many=True)},
     )
     def get(self, request, *args, **kwargs):
