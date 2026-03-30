@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import time
+from datetime import time, timedelta
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
@@ -375,6 +375,90 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertEqual(guids[0], str(expensive.guid))
         self.assertEqual(guids[1], str(cheaper.guid))
         self.assertEqual(guids[-1], str(no_price.guid))
+
+    def test_partner_properties_sort_uses_current_month_cottage_price(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+        today = timezone.localdate()
+
+        from shared.date import month_start, month_end
+
+        current_month_start = month_start(today)
+        previous_month_start = month_start(current_month_start - timedelta(days=1))
+
+        cottage_type = PropertyType.objects.filter(title_en="Cottages").first()
+        self.assertIsNotNone(cottage_type)
+
+        def make_cottage(title):
+            location = PropertyLocation.objects.create(
+                latitude="41.2995",
+                longitude="69.2401",
+                city="Tashkent",
+                country="Uzbekistan",
+            )
+            prop = Property.objects.create(
+                title=title,
+                currency="UZS",
+                property_type=cottage_type,
+                property_location=location,
+                partner=partner,
+                verification_status=VerificationStatus.ACCEPTED,
+            )
+            PropertyRoom.objects.create(
+                property=prop,
+                guests=10,
+                rooms=3,
+                beds=3,
+                bathrooms=2,
+            )
+            return prop
+
+        cottage_a = make_cottage("Cottage A")
+        cottage_b = make_cottage("Cottage B")
+
+        # A: old month is cheaper, current month is more expensive.
+        PropertyPrice.objects.create(
+            property=cottage_a,
+            month_from=previous_month_start,
+            month_to=month_end(previous_month_start),
+            price_on_working_days=Decimal("1000000"),
+            price_on_weekends=Decimal("1000000"),
+            price_per_person=Decimal("100000"),
+        )
+        PropertyPrice.objects.create(
+            property=cottage_a,
+            month_from=current_month_start,
+            month_to=month_end(current_month_start),
+            price_on_working_days=Decimal("2000000"),
+            price_on_weekends=Decimal("2000000"),
+            price_per_person=Decimal("100000"),
+        )
+
+        # B: old month is expensive, current month is less expensive.
+        PropertyPrice.objects.create(
+            property=cottage_b,
+            month_from=previous_month_start,
+            month_to=month_end(previous_month_start),
+            price_on_working_days=Decimal("1500000"),
+            price_on_weekends=Decimal("1500000"),
+            price_per_person=Decimal("100000"),
+        )
+        PropertyPrice.objects.create(
+            property=cottage_b,
+            month_from=current_month_start,
+            month_to=month_end(current_month_start),
+            price_on_working_days=Decimal("1800000"),
+            price_on_weekends=Decimal("1800000"),
+            price_per_person=Decimal("100000"),
+        )
+
+        request = APIRequestFactory().get("/api/property/partner/properties/?sort=price_high")
+        force_authenticate(request, user=partner)
+        response = PartnerPropertyListView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        guids = [str(item["guid"]) for item in response.data]
+        self.assertLess(guids.index(str(cottage_a.guid)), guids.index(str(cottage_b.guid)))
 
     def test_property_list_filters_by_id_alias_with_district_guid(self):
         self._ensure_property_list_context()
