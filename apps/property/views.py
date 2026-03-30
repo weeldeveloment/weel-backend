@@ -1,11 +1,13 @@
 import uuid as uuid_module
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
 from django.db.models import Avg, Case, When, F, Q, DecimalField, Value, IntegerField
 from django.db.models.aggregates import Min, Count
 from django.db.models.functions import Coalesce
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
@@ -57,11 +59,13 @@ from .serializers import (
     RegionListSerializer,
     DistrictListSerializer,
     LocationRegionSerializer,
+    PropertyAnalyticsSerializer,
 )
 from users.models import Partner
 from users.authentication import ClientJWTAuthentication, PartnerJWTAuthentication
 from shared.permissions import IsPartner, IsClient, IsPartnerOwnerProperty
 from payment.exchange_rate import exchange_rate
+from booking.models import Booking
 
 # Recommendations with kind=sanatorium
 from sanatorium.models import Sanatorium
@@ -1472,6 +1476,248 @@ class PartnerPropertyListView(ListAPIView):
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
+
+
+class PartnerPropertyAnalyticsView(APIView):
+    authentication_classes = [PartnerJWTAuthentication]
+    permission_classes = [IsPartner]
+
+    RANGE_DAYS = {
+        "week": 7,
+        "month": 30,
+        "quarter": 90,
+        "year": 365,
+    }
+
+    def get_range_name(self):
+        range_name = self.request.query_params.get("range", "month").strip().lower()
+        if range_name not in self.RANGE_DAYS:
+            raise ValidationError({"range": _("Use one of: week, month, quarter, year")})
+        return range_name
+
+    def get_property(self, property_id):
+        property_obj = (
+            Property.objects.filter(guid=property_id, partner=self.request.user)
+            .select_related("property_location")
+            .prefetch_related("property_images")
+            .first()
+        )
+        if not property_obj:
+            raise NotFound(_("Property not found"))
+        return property_obj
+
+    @staticmethod
+    def change_percent(current: int | Decimal, previous: int | Decimal) -> float:
+        current_decimal = Decimal(str(current))
+        previous_decimal = Decimal(str(previous))
+        if previous_decimal == 0:
+            return 0.0
+        return round(float(((current_decimal - previous_decimal) / previous_decimal) * Decimal("100")), 1)
+
+    @staticmethod
+    def format_axis_label(index: int, total: int, point_date: date, granularity: str) -> str:
+        if granularity == "month":
+            return str(point_date.month)
+
+        if total <= 7:
+            interval = 1
+        elif total <= 31:
+            interval = 7
+        else:
+            interval = max(1, total // 5)
+
+        if index == 0 or index == total - 1 or index % interval == 0:
+            return str(point_date.day)
+        return ""
+
+    def build_points(self, values_map, start_date: date, total_points: int, granularity: str):
+        points = []
+        current = start_date
+
+        for index in range(total_points):
+            if granularity == "month":
+                point_key = (current.year, current.month)
+                label_date = current
+                if current.month == 12:
+                    current = date(current.year + 1, 1, 1)
+                else:
+                    current = date(current.year, current.month + 1, 1)
+            else:
+                point_key = current
+                label_date = current
+                current += timedelta(days=1)
+
+            points.append(
+                {
+                    "label": self.format_axis_label(index, total_points, label_date, granularity),
+                    "value": int(values_map.get(point_key, 0)),
+                }
+            )
+
+        return points
+
+    def get_period_bounds(self, today: date, range_name: str):
+        days = self.RANGE_DAYS[range_name]
+        current_start = today - timedelta(days=days - 1)
+        previous_end = current_start - timedelta(days=1)
+        previous_start = previous_end - timedelta(days=days - 1)
+        return current_start, today, previous_start, previous_end
+
+    def get_bookings_queryset(self, property_obj):
+        return Booking.objects.filter(property=property_obj).select_related("booking_price")
+
+    def build_distribution(self, booked_count: int, cancelled_count: int, no_show_count: int, completed_count: int):
+        cancellation_total = cancelled_count + no_show_count
+        total = booked_count + cancellation_total + completed_count
+        if total <= 0:
+            return {
+                "income_percent": 0,
+                "bookings_percent": 0,
+                "cancellations_percent": 0,
+            }
+
+        income_percent = round((completed_count / total) * 100)
+        bookings_percent = round((booked_count / total) * 100)
+        cancellations_percent = max(0, 100 - income_percent - bookings_percent)
+        return {
+            "income_percent": income_percent,
+            "bookings_percent": bookings_percent,
+            "cancellations_percent": cancellations_percent,
+        }
+
+    def get(self, request, property_id):
+        property_obj = self.get_property(property_id)
+        range_name = self.get_range_name()
+        today = timezone.now().date()
+        current_start, current_end, previous_start, previous_end = self.get_period_bounds(today, range_name)
+        bookings = self.get_bookings_queryset(property_obj)
+
+        current_created = bookings.filter(created_at__date__range=(current_start, current_end))
+        previous_created = bookings.filter(created_at__date__range=(previous_start, previous_end))
+
+        current_cancelled = bookings.filter(
+            cancelled_at__date__range=(current_start, current_end),
+            status=Booking.BookingStatus.CANCELLED,
+        ).exclude(cancellation_reason=Booking.BookingCancellationReason.USER_NO_SHOW)
+        previous_cancelled = bookings.filter(
+            cancelled_at__date__range=(previous_start, previous_end),
+            status=Booking.BookingStatus.CANCELLED,
+        ).exclude(cancellation_reason=Booking.BookingCancellationReason.USER_NO_SHOW)
+
+        current_no_show = bookings.filter(
+            cancelled_at__date__range=(current_start, current_end),
+            cancellation_reason=Booking.BookingCancellationReason.USER_NO_SHOW,
+        )
+        previous_no_show = bookings.filter(
+            cancelled_at__date__range=(previous_start, previous_end),
+            cancellation_reason=Booking.BookingCancellationReason.USER_NO_SHOW,
+        )
+
+        current_cancelled_after_booking = current_cancelled.filter(confirmed_at__isnull=False)
+        previous_cancelled_after_booking = previous_cancelled.filter(confirmed_at__isnull=False)
+
+        current_completed = bookings.filter(
+            completed_at__date__range=(current_start, current_end),
+            status=Booking.BookingStatus.COMPLETED,
+        )
+
+        previous_completed = bookings.filter(
+            completed_at__date__range=(previous_start, previous_end),
+            status=Booking.BookingStatus.COMPLETED,
+        )
+
+        booked_count = current_created.count()
+        previous_booked_count = previous_created.count()
+        cancelled_count = current_cancelled.count()
+        previous_cancelled_count = previous_cancelled.count()
+        no_show_count = current_no_show.count()
+        previous_no_show_count = previous_no_show.count()
+        cancelled_after_booking_count = current_cancelled_after_booking.count()
+        previous_cancelled_after_booking_count = previous_cancelled_after_booking.count()
+        completed_count = current_completed.count()
+
+        current_balance = sum(
+            (booking.booking_price.charge_amount for booking in current_completed if getattr(booking, "booking_price", None)),
+            Decimal("0"),
+        )
+        previous_balance = sum(
+            (booking.booking_price.charge_amount for booking in previous_completed if getattr(booking, "booking_price", None)),
+            Decimal("0"),
+        )
+
+        if range_name == "year":
+            booking_values = {}
+            income_values = {}
+            start_month = date(current_start.year, current_start.month, 1)
+            total_points = 12
+            granularity = "month"
+            for booking in current_created:
+                key = (booking.created_at.year, booking.created_at.month)
+                booking_values[key] = booking_values.get(key, 0) + 1
+            for booking in current_completed:
+                if getattr(booking, "booking_price", None):
+                    key = (booking.completed_at.year, booking.completed_at.month)
+                    income_values[key] = income_values.get(key, 0) + int(booking.booking_price.charge_amount)
+            bookings_activity = self.build_points(booking_values, start_month, total_points, granularity)
+            income_bars = self.build_points(income_values, start_month, total_points, granularity)
+        else:
+            booking_values = {}
+            income_values = {}
+            total_points = (current_end - current_start).days + 1
+            granularity = "day"
+            for booking in current_created:
+                key = booking.created_at.date()
+                booking_values[key] = booking_values.get(key, 0) + 1
+            for booking in current_completed:
+                if getattr(booking, "booking_price", None):
+                    key = booking.completed_at.date()
+                    income_values[key] = income_values.get(key, 0) + int(booking.booking_price.charge_amount)
+            bookings_activity = self.build_points(booking_values, current_start, total_points, granularity)
+            income_bars = self.build_points(income_values, current_start, total_points, granularity)
+
+        first_image = property_obj.property_images.filter(is_pending=False).order_by("order").first()
+        image_url = None
+        if first_image and first_image.image:
+            image_url = request.build_absolute_uri(first_image.image.url)
+
+        payload = {
+            "property": {
+                "guid": property_obj.guid,
+                "title": property_obj.title,
+                "image_url": image_url,
+                "city": getattr(property_obj.property_location, "city", ""),
+            },
+            "range": range_name,
+            "bookings_overview": {
+                "comparison_percent": self.change_percent(current_balance, previous_balance),
+                "booked_count": booked_count,
+                "booked_change_percent": self.change_percent(booked_count, previous_booked_count),
+                "cancelled_count": cancelled_count,
+                "cancelled_change_percent": self.change_percent(cancelled_count, previous_cancelled_count),
+                "no_show_count": no_show_count,
+                "no_show_change_percent": self.change_percent(no_show_count, previous_no_show_count),
+                "cancelled_after_booking_count": cancelled_after_booking_count,
+                "cancelled_after_booking_change_percent": self.change_percent(
+                    cancelled_after_booking_count,
+                    previous_cancelled_after_booking_count,
+                ),
+                "distribution": self.build_distribution(
+                    booked_count=booked_count,
+                    cancelled_count=cancelled_count,
+                    no_show_count=no_show_count,
+                    completed_count=completed_count,
+                ),
+            },
+            "bookings_activity": bookings_activity,
+            "income_overview": {
+                "balance_amount": str(current_balance.quantize(Decimal("0.01"))),
+                "currency": "UZS",
+                "bars": income_bars,
+            },
+        }
+
+        serializer = PropertyAnalyticsSerializer(payload)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class SavedPropertyListView(ListAPIView):

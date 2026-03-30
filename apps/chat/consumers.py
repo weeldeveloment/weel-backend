@@ -8,6 +8,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
 from users.tokens import TokenMetadata
 from .serializers import ChatMessageSerializer
+from .services import ChatRoutingError, get_or_create_conversation_for_message
 
 User = get_user_model()
 
@@ -65,7 +66,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         receiver_type = data.get('receiver_type')
         content = data.get('content', '').strip()
 
-        if not receiver_id or not content:
+        if not receiver_id or not receiver_type or not content:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'error': 'receiver_id, receiver_type and content are required',
+            }))
             return
 
         message = await self.save_message(
@@ -77,6 +82,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
         if not message:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'error': 'Unable to deliver message',
+            }))
             return
 
         await self.channel_layer.group_send(
@@ -185,15 +194,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def save_message(self, sender_type, sender_id, receiver_id, receiver_type, content):
         try:
-            from .models import Conversation, ChatMessage
+            from .models import ChatMessage
             from notification.service import NotificationService
 
+            try:
+                conversation, admin, partner = get_or_create_conversation_for_message(
+                    sender_type=sender_type,
+                    sender_id=int(sender_id),
+                    receiver_id=int(receiver_id),
+                    receiver_type=str(receiver_type),
+                )
+            except ChatRoutingError:
+                return None
+
             if sender_type == 'admin':
-                admin = User.objects.filter(id=sender_id, is_active=True).first()
-                partner = Partner.objects.filter(id=receiver_id, is_active=True).first()
-                if not admin or not partner:
-                    return None
-                conversation, _ = Conversation.objects.get_or_create(admin_user=admin, partner=partner)
                 message = ChatMessage.objects.create(
                     conversation=conversation,
                     sender_admin=admin,
@@ -227,13 +241,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 except Exception as push_error:
                     print(f"Error sending partner push notification: {push_error}")
             else:
-                partner = Partner.objects.filter(id=sender_id, is_active=True).first()
-                admin = User.objects.filter(id=receiver_id, is_active=True).first()
-                if not admin:
-                    admin = User.objects.filter(is_active=True, is_staff=True).order_by('id').first()
-                if not admin or not partner:
-                    return None
-                conversation, _ = Conversation.objects.get_or_create(admin_user=admin, partner=partner)
                 message = ChatMessage.objects.create(
                     conversation=conversation,
                     sender_partner=partner,
