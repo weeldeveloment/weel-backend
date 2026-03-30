@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import time
+from datetime import time, timedelta
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
