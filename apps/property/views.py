@@ -646,8 +646,8 @@ class PropertyListCreateView(ListCreateAPIView):
             else "property_price__price_on_working_days"
         )
 
-        # Partner with ?mine=1 sees only their own properties (verified + unverified).
-        if self.request.query_params.get("mine") and isinstance(self.request.user, Partner):
+        # Partners should only see their own properties (verified + unverified).
+        if isinstance(self.request.user, Partner):
             base_qs = Property.objects.filter(partner=self.request.user)
         else:
             base_qs = Property.objects.filter(is_verified=True)
