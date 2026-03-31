@@ -219,30 +219,13 @@ class PropertyPriceValidateMixin:
                 _("You can't modify prices for past months")
             )
 
-        if m_from == current_month:
-            if month_from < today:
-                raise serializers.ValidationError(
-                    _("Invalid start date for current month")
-                )
-
-            if month_from == month_end(today):
-                raise serializers.ValidationError(
-                    _("You can't set price for only the last day of the month")
-                )
-            expected_to = month_end(today)
-
-        elif m_from == next_month:
-            if month_from != next_month:
-                raise serializers.ValidationError(
-                    _("Next month pricing must start from the first day")
-                )
-            expected_to = month_end(next_month)
-
-        else:
+        if m_from not in (current_month, next_month):
             raise serializers.ValidationError(
                 _("You can set only price for current or next month")
             )
 
+        expected_to = month_end(m_from)
+        # Normalize to full-month coverage; month_from is stored as month start.
         if month_to != expected_to:
             raise serializers.ValidationError(_("Price should cover whole month"))
 
