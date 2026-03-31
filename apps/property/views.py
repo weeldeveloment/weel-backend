@@ -646,11 +646,8 @@ class PropertyListCreateView(ListCreateAPIView):
             else "property_price__price_on_working_days"
         )
 
-        mine_param = str(self.request.query_params.get("mine", "")).strip().lower()
-        include_mine = mine_param in {"1", "true", "yes"}
-
-        # Default list is public (verified only). Partner can request own list via `mine=1`.
-        if isinstance(self.request.user, Partner) and include_mine:
+        # Partner sees own properties (verified + unverified), public sees verified only.
+        if isinstance(self.request.user, Partner):
             base_qs = Property.objects.filter(partner=self.request.user)
         else:
             base_qs = Property.objects.filter(is_verified=True)

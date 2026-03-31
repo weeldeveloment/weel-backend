@@ -278,7 +278,7 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertIn(str(verified.guid), guids)
         self.assertNotIn(str(unverified.guid), guids)
 
-    def test_partner_property_list_without_mine_excludes_unverified(self):
+    def test_partner_property_list_without_mine_includes_own_unverified(self):
         self._ensure_property_list_context()
         partner = self._create_partner()
 
@@ -292,7 +292,7 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         guids = {str(item["guid"]) for item in response.data}
         self.assertIn(str(verified.guid), guids)
-        self.assertNotIn(str(unverified.guid), guids)
+        self.assertIn(str(unverified.guid), guids)
 
     def test_partner_property_list_with_mine_includes_own_unverified_only(self):
         self._ensure_property_list_context()
