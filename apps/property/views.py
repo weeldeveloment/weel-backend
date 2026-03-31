@@ -646,8 +646,11 @@ class PropertyListCreateView(ListCreateAPIView):
             else "property_price__price_on_working_days"
         )
 
-        # Partners should only see their own properties (verified + unverified).
-        if isinstance(self.request.user, Partner):
+        mine_param = str(self.request.query_params.get("mine", "")).strip().lower()
+        include_mine = mine_param in {"1", "true", "yes"}
+
+        # Default list is public (verified only). Partner can request own list via `mine=1`.
+        if isinstance(self.request.user, Partner) and include_mine:
             base_qs = Property.objects.filter(partner=self.request.user)
         else:
             base_qs = Property.objects.filter(is_verified=True)
@@ -1414,8 +1417,8 @@ class PartnerPropertyReviewListView(ListAPIView):
 
 
 class PartnerPropertyListView(ListAPIView):
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    authentication_classes = [PartnerJWTAuthentication]
+    permission_classes = [IsPartner]
     serializer_class = PartnerPropertyListSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, PropertyOrderingFilter]
     filterset_class = PropertyFilter
@@ -1448,11 +1451,7 @@ class PartnerPropertyListView(ListAPIView):
             else "property_price__price_on_working_days"
         )
 
-        base_qs = (
-            Property.objects.filter(partner=self.request.user)
-            if isinstance(self.request.user, Partner)
-            else Property.objects.filter(is_verified=True)
-        )
+        base_qs = Property.objects.filter(partner=self.request.user)
 
         return (
             base_qs
@@ -1502,8 +1501,8 @@ class PartnerPropertyListView(ListAPIView):
         tags=["Property"],
         operation_summary="Retrieve partner's own properties",
         operation_description=(
-            "If authenticated as partner: returns partner's own properties (including unverified). "
-            "If unauthenticated: returns only verified properties."
+            "Requires partner JWT token. Returns only authenticated partner's own "
+            "properties (including unverified)."
         ),
         responses={status.HTTP_200_OK: PartnerPropertyListSerializer(many=True)},
     )

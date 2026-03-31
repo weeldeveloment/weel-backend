@@ -339,20 +339,36 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertEqual(guids[0], str(expensive.guid))
         self.assertEqual(guids[1], str(cheaper.guid))
 
-    def test_partner_properties_endpoint_allows_anonymous(self):
+    def test_partner_properties_endpoint_requires_partner_authentication(self):
         self._ensure_property_list_context()
         partner = self._create_partner()
 
-        verified = self._create_property_for_list(partner, is_verified=True)
-        unverified = self._create_property_for_list(partner, is_verified=False)
+        self._create_property_for_list(partner, is_verified=True)
+        self._create_property_for_list(partner, is_verified=False)
 
         request = APIRequestFactory().get("/api/property/partner/properties/")
         response = PartnerPropertyListView.as_view()(request)
 
+        self.assertEqual(response.status_code, 401)
+
+    def test_partner_properties_endpoint_returns_only_authenticated_partner_properties(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+        other_partner = self._create_partner()
+
+        own_verified = self._create_property_for_list(partner, is_verified=True)
+        own_unverified = self._create_property_for_list(partner, is_verified=False)
+        other_verified = self._create_property_for_list(other_partner, is_verified=True)
+
+        request = APIRequestFactory().get("/api/property/partner/properties/")
+        force_authenticate(request, user=partner)
+        response = PartnerPropertyListView.as_view()(request)
+
         self.assertEqual(response.status_code, 200)
         guids = {str(item["guid"]) for item in response.data}
-        self.assertIn(str(verified.guid), guids)
-        self.assertNotIn(str(unverified.guid), guids)
+        self.assertIn(str(own_verified.guid), guids)
+        self.assertIn(str(own_unverified.guid), guids)
+        self.assertNotIn(str(other_verified.guid), guids)
 
     def test_partner_properties_sort_price_high_puts_null_prices_last(self):
         self._ensure_property_list_context()
