@@ -1067,14 +1067,10 @@ class ClientCardViewSet(viewsets.ViewSet):
         tags=["Client Cards"],
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
-            required=["card_number", "expire_date", "phone_number"],
+            required=["card_number", "expire_date"],
             properties={
                 "card_number": openapi.Schema(type=openapi.TYPE_STRING),
                 "expire_date": openapi.Schema(type=openapi.TYPE_STRING),
-                "phone_number": openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description="Phone number (OTP is sent to this number). 998... or +998...",
-                ),
             },
         ),
     )
@@ -1082,27 +1078,15 @@ class ClientCardViewSet(viewsets.ViewSet):
         client = self.get_client()
         card_number = request.data.get("card_number")
         expire_date = request.data.get("expire_date")
-        phone_number = request.data.get("phone_number")
 
         if not card_number or not expire_date:
             return Response(
                 {"detail": "card_number and expire_date required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not phone_number:
-            return Response(
-                {"detail": _("phone_number required")},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        normalized = phone_number.strip()
-        if not (normalized.startswith("998") or normalized.startswith("+998")):
-            return Response(
-                {"detail": _("Phone number must start with 998")},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not normalized.startswith("+"):
-            normalized = "+" + normalized
 
+        # Always use the authenticated client's phone number for Plum (no client-side phone input).
+        normalized = str(client.phone_number)
         service = PlumAPIService()
         try:
             result = service.add_client_card(
