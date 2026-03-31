@@ -98,6 +98,9 @@ class PropertyFilter(filters.FilterSet):
     alcohol = filters.BooleanFilter(field_name="property_detail__is_allowed_alcohol")
     pets = filters.BooleanFilter(field_name="property_detail__is_allowed_pets")
     corporate = filters.BooleanFilter(field_name="property_detail__is_allowed_corporate")
+    is_allowed_corporate = filters.BooleanFilter(
+        field_name="property_detail__is_allowed_corporate"
+    )
 
     class Meta:
         model = Property

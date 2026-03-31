@@ -778,6 +778,62 @@ class PropertyFilterUnitTests(TestCase):
         f2 = PropertyFilter(data={"adults": 5, "children": 0}, queryset=qs)
         self.assertFalse(f2.qs.exists())
 
+    def test_filter_corporate_filters_by_property_detail_flag(self):
+        partner = Partner.objects.create(
+            first_name="P", last_name="P", username="pcorp", phone_number="+998908888888", is_active=True
+        )
+        pt = PropertyType.objects.create(
+            title_en="Apt", title_ru="Кв", title_uz="Kv", icon=self._svg_file()
+        )
+        location = PropertyLocation.objects.create(
+            latitude=Decimal("41.3"), longitude=Decimal("69.2"), city="Tashkent", country="UZ"
+        )
+        second_location = PropertyLocation.objects.create(
+            latitude=Decimal("41.31"), longitude=Decimal("69.21"), city="Tashkent", country="UZ"
+        )
+
+        corporate_allowed = Property.objects.create(
+            title="Corporate Allowed",
+            property_type=pt,
+            property_location=location,
+            partner=partner,
+        )
+        corporate_not_allowed = Property.objects.create(
+            title="Corporate Not Allowed",
+            property_type=pt,
+            property_location=second_location,
+            partner=partner,
+        )
+
+        PropertyDetail.objects.create(
+            property=corporate_allowed,
+            description_en="desc",
+            description_ru="desc",
+            description_uz="desc",
+            is_allowed_corporate=True,
+        )
+        PropertyDetail.objects.create(
+            property=corporate_not_allowed,
+            description_en="desc",
+            description_ru="desc",
+            description_uz="desc",
+            is_allowed_corporate=False,
+        )
+
+        qs = Property.objects.filter(guid__in=[corporate_allowed.guid, corporate_not_allowed.guid])
+
+        filtered_by_corporate = PropertyFilter(data={"corporate": "true"}, queryset=qs).qs
+        self.assertEqual(
+            {str(item.guid) for item in filtered_by_corporate},
+            {str(corporate_allowed.guid)},
+        )
+
+        filtered_by_alias = PropertyFilter(data={"is_allowed_corporate": "1"}, queryset=qs).qs
+        self.assertEqual(
+            {str(item.guid) for item in filtered_by_alias},
+            {str(corporate_allowed.guid)},
+        )
+
     def test_filter_property_services_invalid_uuid_returns_none(self):
         qs = Property.objects.all()
         f = PropertyFilter(data={"property_services": "not-a-uuid"}, queryset=qs)

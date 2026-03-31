@@ -115,6 +115,25 @@ class PropertyImageInline(admin.TabularInline):
     show_change_link = True
 
 
+class CorporateAllowedListFilter(admin.SimpleListFilter):
+    title = "Korporativ / Корпоратив / Corporate"
+    parameter_name = "corporate_allowed"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("1", "Ha / Да / Yes"),
+            ("0", "Yo'q / Нет / No"),
+        )
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == "1":
+            return queryset.filter(property_detail__is_allowed_corporate=True)
+        if value == "0":
+            return queryset.filter(property_detail__is_allowed_corporate=False)
+        return queryset
+
+
 class ApartmentInlinePermissionMixin:
     """Faqat Apartment inline'lari uchun ko'rsatish permissionlari."""
 
@@ -695,8 +714,8 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
         "verified_by",
         "is_recommended",
         "region",
-        "district",
         "created_at",
+        CorporateAllowedListFilter,
     ]
     fieldsets = [
         (
@@ -793,8 +812,8 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
         "verified_by",
         "is_recommended",
         "region",
-        "district",
         "created_at",
+        CorporateAllowedListFilter,
     ]
     fieldsets = [
         (

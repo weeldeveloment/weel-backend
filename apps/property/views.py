@@ -741,6 +741,7 @@ class PropertyListCreateView(ListCreateAPIView):
             "- `property_services` — service GUIDs (comma-separated: `uuid1,uuid2`)\n"
             "- `min_price`, `max_price`, `currency` — price range (USD or UZS)\n"
             "- `from_date`, `to_date` — date range\n"
+            "- `corporate` — corporate kirishga ruxsat (`true/false`)\n"
             "- `adults`, `children` — guest counts\n\n"
             "**Response:** Property list (guid, title, price, property_location, property_images, "
             "region, district, guests, rooms, average_rating, created_at)."
@@ -776,6 +777,12 @@ class PropertyListCreateView(ListCreateAPIView):
             openapi.Parameter("min_price", openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
             openapi.Parameter("max_price", openapi.IN_QUERY, type=openapi.TYPE_NUMBER),
             openapi.Parameter("currency", openapi.IN_QUERY, type=openapi.TYPE_STRING, enum=["USD", "UZS"]),
+            openapi.Parameter(
+                "corporate",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_BOOLEAN,
+                description="Only properties where corporate entry is allowed",
+            ),
         ],
         responses={status.HTTP_200_OK: PropertyListSerializer(many=True)},
     )
