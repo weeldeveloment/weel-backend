@@ -14,6 +14,7 @@ from .models import PropertyService, Property
 from booking.models import CalendarDate
 from payment.choices import Currency
 from payment.exchange_rate import to_uzs, to_usd
+from .pricing import day_type_flags
 
 
 class PropertyServiceFilter(filters.FilterSet):
@@ -247,49 +248,34 @@ class PropertyFilter(filters.FilterSet):
             self._bound_filter_price_range(max_price, currency) if max_price else {}
         )
 
-        # non-cottages properties
-        non_cottage_q = self._build_currency_price_q(
-            field_name="price",
-            min_bounds=min_bounds,
-            max_bounds=max_bounds,
-            currency=currency,
+        reference_start = from_date or timezone.localdate()
+        reference_end = to_date or reference_start
+        if reference_end < reference_start:
+            return queryset.none()
+
+        price_q = Q(
+            property_price__month_from__lte=reference_end,
+            property_price__month_to__gte=reference_start,
         )
 
-        # cottage properties
-        cottage_q = Q()
+        weekdays, weekends = day_type_flags(reference_start, reference_end)
+        if weekdays:
+            price_q &= self._build_currency_price_q(
+                field_name="property_price__price_on_working_days",
+                min_bounds=min_bounds,
+                max_bounds=max_bounds,
+                currency=currency,
+            )
 
-        if from_date:
-            end_date = to_date or from_date
+        if weekends:
+            price_q &= self._build_currency_price_q(
+                field_name="property_price__price_on_weekends",
+                min_bounds=min_bounds,
+                max_bounds=max_bounds,
+                currency=currency,
+            )
 
-            cottage_q &= Q(property_price__month_from__lte=end_date)
-            cottage_q &= Q(property_price__month_to__gte=from_date)
-
-            weekdays = weekends = False
-            for day in (
-                from_date + timedelta(n) for n in range((end_date - from_date).days + 1)
-            ):
-                if day.weekday() < 4:  # Monday-Thursday
-                    weekdays = True
-                else:  # Friday-Sunday
-                    weekends = True
-
-            if weekdays:
-                cottage_q &= self._build_currency_price_q(
-                    field_name="property_price__price_on_working_days",
-                    min_bounds=min_bounds,
-                    max_bounds=max_bounds,
-                    currency=currency,
-                )
-
-            if weekends:
-                cottage_q &= self._build_currency_price_q(
-                    field_name="property_price__price_on_weekends",
-                    min_bounds=min_bounds,
-                    max_bounds=max_bounds,
-                    currency=currency,
-                )
-
-        return queryset.filter(non_cottage_q | cottage_q).distinct()
+        return queryset.filter(price_q).distinct()
 
     def filter_property_services(self, queryset, name, value):
         property_services_ids = [v.strip() for v in value.split(",") if v.strip()]

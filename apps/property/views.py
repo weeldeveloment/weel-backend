@@ -2,7 +2,7 @@ import uuid as uuid_module
 from datetime import date
 
 from django.db.models import Avg, Case, When, F, Q, DecimalField, Value, IntegerField
-from django.db.models.aggregates import Min, Count
+from django.db.models.aggregates import Count
 from django.db.models.functions import Coalesce
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils.translation import gettext_lazy as _
@@ -62,6 +62,7 @@ from users.models import Partner
 from users.authentication import ClientJWTAuthentication, PartnerJWTAuthentication
 from shared.permissions import IsPartner, IsClient, IsPartnerOwnerProperty
 from payment.exchange_rate import exchange_rate
+from .pricing import property_price_expression, resolve_reference_date
 
 # Recommendations with kind=sanatorium
 from sanatorium.models import Sanatorium
@@ -174,26 +175,11 @@ def _is_null_like_param(value: str | None) -> bool:
 
 
 def _resolve_sort_reference_date(raw_from_date: str | None, default_date: date) -> date:
-    if not raw_from_date:
-        return default_date
-    try:
-        return date.fromisoformat(str(raw_from_date).strip())
-    except (TypeError, ValueError):
-        return default_date
+    return resolve_reference_date(raw_from_date, default_date)
 
 
-def _cottage_price_expression(price_field: str, reference_date: date):
-    return Coalesce(
-        Min(
-            price_field,
-            filter=Q(
-                property_price__month_from__lte=reference_date,
-                property_price__month_to__gte=reference_date,
-            ),
-        ),
-        Min(price_field),
-        output_field=DecimalField(max_digits=12, decimal_places=2),
-    )
+def _property_price_expression(price_field: str, reference_date: date):
+    return property_price_expression(price_field, reference_date)
 
 
 class DistrictListView(ListAPIView):
@@ -636,10 +622,6 @@ class PropertyListCreateView(ListCreateAPIView):
         )
         is_weekend = sort_reference_date.weekday() >= 4  # Fri-Sun
 
-        cottage_type = (
-            PropertyType.objects.filter(title_en="Cottages").values_list("id", flat=True).first()
-        )
-
         property_price_fields = (
             "property_price__price_on_weekends"
             if is_weekend
@@ -662,7 +644,7 @@ class PropertyListCreateView(ListCreateAPIView):
         property = (
             base_qs
             .annotate(
-                cottage_price=_cottage_price_expression(
+                effective_price=_property_price_expression(
                     property_price_fields,
                     sort_reference_date,
                 ),
@@ -676,27 +658,8 @@ class PropertyListCreateView(ListCreateAPIView):
                     output_field=DecimalField(),
                 ),
                 order_price=Case(
-                    When(
-                        ~Q(property_type_id=cottage_type),
-                        currency="UZS",
-                        then=F("price"),
-                    ),
-                    When(
-                        ~Q(property_type_id=cottage_type),
-                        currency="USD",
-                        then=F("price") * rate,
-                    ),
-                    # ---------- cottages ----------
-                    When(
-                        property_type_id=cottage_type,
-                        currency="UZS",
-                        then=F("cottage_price"),
-                    ),
-                    When(
-                        property_type_id=cottage_type,
-                        currency="USD",
-                        then=F("cottage_price") * rate,
-                    ),
+                    When(currency="UZS", then=F("effective_price")),
+                    When(currency="USD", then=F("effective_price") * rate),
                     output_field=DecimalField(max_digits=12, decimal_places=2),
                 ),
             )
@@ -1445,10 +1408,6 @@ class PartnerPropertyListView(ListAPIView):
         )
         is_weekend = sort_reference_date.weekday() >= 4
 
-        cottage_type = (
-            PropertyType.objects.filter(title_en="Cottages").values_list("id", flat=True).first()
-        )
-
         property_price_fields = (
             "property_price__price_on_weekends"
             if is_weekend
@@ -1460,7 +1419,7 @@ class PartnerPropertyListView(ListAPIView):
         return (
             base_qs
             .annotate(
-                cottage_price=_cottage_price_expression(
+                effective_price=_property_price_expression(
                     property_price_fields,
                     sort_reference_date,
                 ),
@@ -1474,26 +1433,8 @@ class PartnerPropertyListView(ListAPIView):
                     output_field=DecimalField(),
                 ),
                 order_price=Case(
-                    When(
-                        ~Q(property_type_id=cottage_type),
-                        currency="UZS",
-                        then=F("price"),
-                    ),
-                    When(
-                        ~Q(property_type_id=cottage_type),
-                        currency="USD",
-                        then=F("price") * rate,
-                    ),
-                    When(
-                        property_type_id=cottage_type,
-                        currency="UZS",
-                        then=F("cottage_price"),
-                    ),
-                    When(
-                        property_type_id=cottage_type,
-                        currency="USD",
-                        then=F("cottage_price") * rate,
-                    ),
+                    When(currency="UZS", then=F("effective_price")),
+                    When(currency="USD", then=F("effective_price") * rate),
                     output_field=DecimalField(max_digits=12, decimal_places=2),
                 ),
             )
@@ -1528,9 +1469,6 @@ class SavedPropertyListView(ListAPIView):
             today,
         )
         is_weekend = sort_reference_date.weekday() >= 4
-        cottage_type = (
-            PropertyType.objects.filter(title_en="Cottages").values_list("id", flat=True).first()
-        )
         property_price_fields = (
             "property_price__price_on_weekends"
             if is_weekend
@@ -1543,7 +1481,7 @@ class SavedPropertyListView(ListAPIView):
         return (
             base_qs
             .annotate(
-                cottage_price=_cottage_price_expression(
+                effective_price=_property_price_expression(
                     property_price_fields,
                     sort_reference_date,
                 ),
@@ -1557,26 +1495,8 @@ class SavedPropertyListView(ListAPIView):
                     output_field=DecimalField(),
                 ),
                 order_price=Case(
-                    When(
-                        ~Q(property_type_id=cottage_type),
-                        currency="UZS",
-                        then=F("price"),
-                    ),
-                    When(
-                        ~Q(property_type_id=cottage_type),
-                        currency="USD",
-                        then=F("price") * rate,
-                    ),
-                    When(
-                        property_type_id=cottage_type,
-                        currency="UZS",
-                        then=F("cottage_price"),
-                    ),
-                    When(
-                        property_type_id=cottage_type,
-                        currency="USD",
-                        then=F("cottage_price") * rate,
-                    ),
+                    When(currency="UZS", then=F("effective_price")),
+                    When(currency="USD", then=F("effective_price") * rate),
                     output_field=DecimalField(max_digits=12, decimal_places=2),
                 ),
             )

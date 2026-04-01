@@ -233,10 +233,22 @@ class BookingPriceService:
         day: date,
         property: Property,
     ):
-        return PropertyPrice.objects.get(
+        property_price = PropertyPrice.objects.filter(
             property=property,
             month_from__lte=day,
             month_to__gte=day,
+        ).order_by("month_from", "created_at").first()
+        if property_price:
+            return property_price
+
+        fallback_price = PropertyPrice.objects.filter(
+            property=property,
+        ).order_by("month_from", "created_at").first()
+        if fallback_price:
+            return fallback_price
+
+        raise ValidationError(
+            _("Pricing is not configured for this property")
         )
 
     def calculate(

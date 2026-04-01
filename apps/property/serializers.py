@@ -4,7 +4,6 @@ from datetime import time
 from decimal import Decimal
 
 from django.db.models import Avg, Q
-from django.utils import timezone
 from django.db import transaction, models
 from django.utils.translation import gettext_lazy as _
 
@@ -55,8 +54,11 @@ from .models import (
 )
 from payment.choices import Currency
 from payment.exchange_rate import to_uzs
-from shared.date import parse_yyyy_mm_dd, month_start, month_end
+from shared.date import parse_yyyy_mm_dd, month_start
 from booking.models import Booking
+from .pricing import (
+    related_prices_for_response,
+)
 
 
 class PropertyTypeListSerializer(LanguageFieldMixin, serializers.ModelSerializer):
@@ -206,16 +208,11 @@ class PropertyListSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    @staticmethod
-    def get_price(obj):
-        if obj.property_type.title_en.lower() == "cottages":
-            property_price = getattr(obj, "property_price", None)
-            if property_price:
-                return PropertyListPriceSerializer(property_price, many=True).data
-            return None
-        if obj.price is None:
-            return None
-        return to_uzs(obj.price)
+    def get_price(self, obj):
+        property_price = related_prices_for_response(obj)
+        if property_price.exists():
+            return PropertyListPriceSerializer(property_price, many=True).data
+        return None
 
     @staticmethod
     def get_average_rating(obj):
@@ -275,16 +272,11 @@ class PartnerPropertyListSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    @staticmethod
-    def get_price(obj):
-        if obj.property_type.title_en.lower() == "cottages":
-            property_price = getattr(obj, "property_price", None)
-            if property_price:
-                return PropertyListPriceSerializer(property_price, many=True).data
-            return None
-        if obj.price is None:
-            return None
-        return to_uzs(obj.price)
+    def get_price(self, obj):
+        property_price = related_prices_for_response(obj)
+        if property_price.exists():
+            return PropertyListPriceSerializer(property_price, many=True).data
+        return None
 
     @staticmethod
     def get_average_rating(obj):
@@ -520,15 +512,13 @@ class PropertyDetailSerializer(LanguageFieldMixin, serializers.ModelSerializer):
         partner = getattr(request, "user")
 
         if isinstance(partner, Partner):
-            property_price = getattr(obj.property, "property_price", None)
+            property_price = related_prices_for_response(obj.property)
             return PropertyPriceSerializer(property_price, many=True).data
 
-        if obj.property.property_type.title_en.lower() == "cottages":
-            property_price = getattr(obj.property, "property_price", None)
-            if property_price:
-                return PropertyListPriceSerializer(property_price, many=True).data
-            return None
-        return to_uzs(obj.property.price)
+        property_price = related_prices_for_response(obj.property)
+        if property_price.exists():
+            return PropertyListPriceSerializer(property_price, many=True).data
+        return None
 
     def get_description(self, obj):
         return self.get_lang_field(obj, "description")
@@ -741,30 +731,12 @@ class PropertyCreateSerializer(
         PropertyRoom.objects.create(property=property, **property_room_data)
         PropertyDetail.objects.create(property=property, **property_detail_data)
 
-        if property.property_type.title_en.lower() == "cottages":
-            serializer = PropertyPriceSerializer(
-                many=True,
-                data=price_data,
-            )
-            serializer.is_valid(raise_exception=True)
-            serializer.save(property=property)
-        else:
-            property.price = self.validate_single_price(price_data)
-            property.save(update_fields=["price"])
-
-            # Non-cottages (Apartment va boshqalar) uchun ham PropertyPrice yozuvi yaratiladi,
-            # shunda admin paneldagi Property price jadvalida narx ko'rinadi.
-            today = timezone.now().date()
-            PropertyPrice.objects.update_or_create(
-                property=property,
-                month_from=month_start(today),
-                defaults={
-                    "month_to": month_end(today),
-                    "price_per_person": Decimal("0"),
-                    "price_on_working_days": property.price,
-                    "price_on_weekends": property.price,
-                },
-            )
+        serializer = PropertyPriceSerializer(
+            many=True,
+            data=price_data,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(property=property)
 
         return property
 
@@ -915,47 +887,28 @@ class PropertyUpdateSerializer(
                 property_updated = True
                 property_update_fields.add(field)
 
-        if price_data:
-            property_type = property.property_type
-            if property_type.title_en.lower() == "cottages":
-                existing_prices = {
-                    pp.month_from: pp for pp in property.property_price.all()
-                }
+        if price_data is not None:
+            existing_prices = {
+                pp.month_from: pp for pp in property.property_price.all()
+            }
 
-                for item in price_data:
-                    month_from = parse_yyyy_mm_dd(item["month_from"], "month_from")
-                    m_from = month_start(month_from)
+            for item in price_data:
+                month_from = parse_yyyy_mm_dd(item["month_from"], "month_from")
+                m_from = month_start(month_from)
 
-                    property_price = existing_prices.get(m_from)
-                    if not property_price:
-                        raise serializers.ValidationError(
-                            _("You can only update price for existing price months")
-                        )
-
-                    serializer = PropertyPriceSerializer(
-                        property_price,
-                        data=item,
-                        partial=True,
+                property_price = existing_prices.get(m_from)
+                if not property_price:
+                    raise serializers.ValidationError(
+                        _("You can only update price for existing price months")
                     )
-                    serializer.is_valid(raise_exception=True)
-                    serializer.save()
 
-            else:
-                property.price = price_data
-                property_update_fields.add("price")
-
-                # Non-cottages uchun mavjud/current oyga PropertyPrice yozuvini yangilab boramiz
-                today = timezone.now().date()
-                PropertyPrice.objects.update_or_create(
-                    property=property,
-                    month_from=month_start(today),
-                    defaults={
-                        "month_to": month_end(today),
-                        "price_per_person": Decimal("0"),
-                        "price_on_working_days": property.price,
-                        "price_on_weekends": property.price,
-                    },
+                serializer = PropertyPriceSerializer(
+                    property_price,
+                    data=item,
+                    partial=True,
                 )
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
             property_updated = True
             update_price = True
 
