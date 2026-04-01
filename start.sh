@@ -3,7 +3,6 @@ set -e
 
 . /opt/venv/bin/activate
 
-# Har deployda DBni yangilash. Faqat SKIP_MIGRATIONS=true bo'lsa o'tkazib yuboriladi.
 if [ "${SKIP_MIGRATIONS:-}" = "true" ] || [ "${SKIP_MIGRATIONS:-}" = "1" ]; then
 	echo "Skipping migrations (SKIP_MIGRATIONS set)."
 else

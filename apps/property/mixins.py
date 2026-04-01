@@ -95,36 +95,14 @@ class PropertyPriceValidateMixin:
         if property_type is None:
             raise serializers.ValidationError(_("Invalid property type"))
 
-        # non-cottages (Apartment va boshqalar): bitta raqam yoki frontend ro'yxati (birinchi elementdan price_per_person olinadi)
-        if property_type.title_en.lower() != "cottages":
-            if isinstance(value, list) and len(value) > 0:
-                first = value[0]
-                if isinstance(first, dict) and "price_per_person" in first:
-                    value = first["price_per_person"]
-                else:
-                    raise serializers.ValidationError(
-                        _(
-                            "For non-cottage property types, price must be a single number "
-                            "or a list of dicts with at least one item containing 'price_per_person'."
-                        )
-                    )
-            elif isinstance(value, dict):
-                value = value.get("price_per_person")
-                if value is None:
-                    raise serializers.ValidationError(
-                        _("Price must be a single number or a dict with 'price_per_person'.")
-                    )
-            self.validate_single_price(value)
-            return value
-
-        # cottages: price — ro'yxat yoki bitta raqam (raqam bo'lsa joriy oy uchun avtomatik ro'yxat)
+        # price: ro'yxat yoki bitta raqam (raqam bo'lsa joriy oy uchun avtomatik ro'yxat)
         if not isinstance(value, list):
             try:
                 single_price = self.validate_single_price(value)
             except serializers.ValidationError:
                 raise serializers.ValidationError(
                     _(
-                        "For Cottages, price must be a list of objects with: "
+                        "Price must be a list of objects with: "
                         "month_from, month_to, price_per_person, price_on_weekends, price_on_working_days. "
                         "Or use a single number for current month (e.g. 100)."
                     )
@@ -189,7 +167,7 @@ class PropertyPriceValidateMixin:
             if not partial:
                 if missing_fields:
                     raise serializers.ValidationError(
-                        _("Missing fields for cottage price: ")
+                        _("Missing fields for price: ")
                         + ", ".join(missing_fields)
                     )
 

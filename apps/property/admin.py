@@ -26,6 +26,7 @@ from .models import (
     District,
 )
 from .models import VerificationStatus
+from .pricing import get_effective_price_amount
 
 
 # Register your models here.
@@ -113,6 +114,25 @@ class PropertyImageInline(admin.TabularInline):
     fields = ("image", "order", "is_pending")
     readonly_fields = ("created_at",)
     show_change_link = True
+
+
+class CorporateAllowedListFilter(admin.SimpleListFilter):
+    title = "Korporativ / Корпоратив / Corporate"
+    parameter_name = "corporate_allowed"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("1", "Ha / Да / Yes"),
+            ("0", "Yo'q / Нет / No"),
+        )
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == "1":
+            return queryset.filter(property_detail__is_allowed_corporate=True)
+        if value == "0":
+            return queryset.filter(property_detail__is_allowed_corporate=False)
+        return queryset
 
 
 class ApartmentInlinePermissionMixin:
@@ -250,7 +270,6 @@ PROPERTY_DETAIL_ADMIN_PROPERTY_FIELDS = [
     "property_type",
     "img",
     "currency",
-    "price",
     "partner",
     "property_location",
     "region",
@@ -367,6 +386,10 @@ class PropertyDetailAdminForm(forms.ModelForm):
             self.fields["verified_by"].required = False
         if "verified_at" in self.fields:
             self.fields["verified_at"].required = False
+        if "price" in self.fields:
+            self.fields["price"].disabled = True
+            if property_obj:
+                self.fields["price"].initial = get_effective_price_amount(property_obj)
 
     def clean(self):
         data = super().clean()
@@ -446,12 +469,13 @@ class PropertyAdmin(ModelAdmin):
         "title",
         "property_type",
         "img",
-        "price",
+        "effective_price_display",
         "is_verified",
         "is_recommended",
         "created_at",
     ]
     list_filter = ["property_type", "is_verified", "is_recommended", "created_at"]
+    readonly_fields = ["price"]
     filter_horizontal = ["property_services", "categories"]
 
     inlines = [PropertyImageInline]
@@ -460,6 +484,13 @@ class PropertyAdmin(ModelAdmin):
         "model_field_name": "html.unescape",
         "other_field_name": lambda content: content.strip(),
     }
+
+    @admin.display(description=_("Price"))
+    def effective_price_display(self, obj):
+        price = get_effective_price_amount(obj)
+        if price is None:
+            return "—"
+        return f"{price} {obj.currency}"
 
     def _resolve_property_type_title(self, request, obj=None):
         if obj and getattr(obj, "property_type_id", None):
@@ -498,7 +529,6 @@ class PropertyAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
-                        "price",
                         "partner",
                     ]
                 },
@@ -592,7 +622,7 @@ class PropertyAdmin(ModelAdmin):
 
         property_type_title = self._resolve_property_type_title(request, obj=obj)
         if property_type_title == "apartment":
-            return [ApartmentDetailInline, ApartmentRoomInline, PropertyImageInline]
+            return [ApartmentDetailInline, ApartmentRoomInline, PropertyImageInline, CottagePriceInline]
         if property_type_title == "cottages":
             return [PropertyImageInline, CottageDetailInline, CottageRoomInline, CottagePriceInline]
         return [PropertyImageInline]
@@ -673,12 +703,12 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
     """Admin: faqat Apartment tipidagi propertylar."""
 
     property_type_title_en = "Apartment"
-    inlines = [ApartmentDetailInline, ApartmentRoomInline, PropertyImageInline]
+    inlines = [ApartmentDetailInline, ApartmentRoomInline, PropertyImageInline, CottagePriceInline]
     list_display = [
         "guid",
         "title",
         "apartment_number_display",
-        "price",
+        "effective_price_display",
         "currency",
         "region",
         "district",
@@ -695,8 +725,8 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
         "verified_by",
         "is_recommended",
         "region",
-        "district",
         "created_at",
+        CorporateAllowedListFilter,
     ]
     fieldsets = [
         (
@@ -707,7 +737,6 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
                     "property_type",
                     "img",
                     "currency",
-                    "price",
                     "partner",
                 ]
             },
@@ -793,8 +822,8 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
         "verified_by",
         "is_recommended",
         "region",
-        "district",
         "created_at",
+        CorporateAllowedListFilter,
     ]
     fieldsets = [
         (
@@ -912,7 +941,10 @@ class PropertyDetailAdmin(ModelAdmin):
 
     @admin.display(description=_("Price"))
     def price_display(self, obj):
-        return getattr(obj.property, "price", None)
+        price = get_effective_price_amount(obj.property)
+        if price is None:
+            return "—"
+        return f"{price} {obj.property.currency}"
 
     @admin.display(description=_("Verification status"))
     def verification_status_display(self, obj):
@@ -971,7 +1003,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
-                        "price",
                         "partner",
                     ]
                 },
@@ -1047,7 +1078,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
-                        "price",
                         "partner",
                     ]
                 },
@@ -1117,7 +1147,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
-                        "price",
                         "partner",
                         "property_location",
                         "region",
@@ -1160,6 +1189,8 @@ class PropertyDetailAdmin(ModelAdmin):
 
         property_obj = obj.property
         for field_name in form.PROPERTY_NON_M2M_FIELDS:
+            if field_name == "price":
+                continue
             if field_name in form.cleaned_data:
                 setattr(property_obj, field_name, form.cleaned_data[field_name])
 

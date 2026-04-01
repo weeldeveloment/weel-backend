@@ -278,7 +278,7 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertIn(str(verified.guid), guids)
         self.assertNotIn(str(unverified.guid), guids)
 
-    def test_partner_property_list_without_mine_excludes_unverified(self):
+    def test_partner_property_list_without_mine_includes_own_unverified(self):
         self._ensure_property_list_context()
         partner = self._create_partner()
 
@@ -292,7 +292,7 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         guids = {str(item["guid"]) for item in response.data}
         self.assertIn(str(verified.guid), guids)
-        self.assertNotIn(str(unverified.guid), guids)
+        self.assertIn(str(unverified.guid), guids)
 
     def test_partner_property_list_with_mine_includes_own_unverified_only(self):
         self._ensure_property_list_context()
@@ -320,13 +320,30 @@ class PropertyVerificationRegressionTests(TestCase):
         cheaper = self._create_property_for_list(partner, is_verified=True)
         expensive = self._create_property_for_list(partner, is_verified=True)
 
-        Property.objects.filter(pk=cheaper.pk).update(
-            price=Decimal("1000000.00"),
-            currency="UZS",
+        from shared.date import month_start, month_end
+
+        current_month_start = month_start(timezone.localdate())
+        current_month_end = month_end(current_month_start)
+
+        PropertyPrice.objects.update_or_create(
+            property=cheaper,
+            month_from=current_month_start,
+            defaults={
+                "month_to": current_month_end,
+                "price_on_working_days": Decimal("1000000.00"),
+                "price_on_weekends": Decimal("1000000.00"),
+                "price_per_person": Decimal("0.00"),
+            },
         )
-        Property.objects.filter(pk=expensive.pk).update(
-            price=Decimal("2000000.00"),
-            currency="UZS",
+        PropertyPrice.objects.update_or_create(
+            property=expensive,
+            month_from=current_month_start,
+            defaults={
+                "month_to": current_month_end,
+                "price_on_working_days": Decimal("2000000.00"),
+                "price_on_weekends": Decimal("2000000.00"),
+                "price_per_person": Decimal("0.00"),
+            },
         )
 
         request = APIRequestFactory().get("/api/property/partner/properties/?sort=price_high")
@@ -339,20 +356,36 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertEqual(guids[0], str(expensive.guid))
         self.assertEqual(guids[1], str(cheaper.guid))
 
-    def test_partner_properties_endpoint_allows_anonymous(self):
+    def test_partner_properties_endpoint_requires_partner_authentication(self):
         self._ensure_property_list_context()
         partner = self._create_partner()
 
-        verified = self._create_property_for_list(partner, is_verified=True)
-        unverified = self._create_property_for_list(partner, is_verified=False)
+        self._create_property_for_list(partner, is_verified=True)
+        self._create_property_for_list(partner, is_verified=False)
 
         request = APIRequestFactory().get("/api/property/partner/properties/")
         response = PartnerPropertyListView.as_view()(request)
 
+        self.assertEqual(response.status_code, 401)
+
+    def test_partner_properties_endpoint_returns_only_authenticated_partner_properties(self):
+        self._ensure_property_list_context()
+        partner = self._create_partner()
+        other_partner = self._create_partner()
+
+        own_verified = self._create_property_for_list(partner, is_verified=True)
+        own_unverified = self._create_property_for_list(partner, is_verified=False)
+        other_verified = self._create_property_for_list(other_partner, is_verified=True)
+
+        request = APIRequestFactory().get("/api/property/partner/properties/")
+        force_authenticate(request, user=partner)
+        response = PartnerPropertyListView.as_view()(request)
+
         self.assertEqual(response.status_code, 200)
         guids = {str(item["guid"]) for item in response.data}
-        self.assertIn(str(verified.guid), guids)
-        self.assertNotIn(str(unverified.guid), guids)
+        self.assertIn(str(own_verified.guid), guids)
+        self.assertIn(str(own_unverified.guid), guids)
+        self.assertNotIn(str(other_verified.guid), guids)
 
     def test_partner_properties_sort_price_high_puts_null_prices_last(self):
         self._ensure_property_list_context()
@@ -362,9 +395,32 @@ class PropertyVerificationRegressionTests(TestCase):
         cheaper = self._create_property_for_list(partner, is_verified=True)
         no_price = self._create_property_for_list(partner, is_verified=True)
 
-        Property.objects.filter(pk=expensive.pk).update(price=Decimal("2000000.00"), currency="UZS")
-        Property.objects.filter(pk=cheaper.pk).update(price=Decimal("1000000.00"), currency="UZS")
-        Property.objects.filter(pk=no_price.pk).update(price=None)
+        from shared.date import month_start, month_end
+
+        current_month_start = month_start(timezone.localdate())
+        current_month_end = month_end(current_month_start)
+
+        PropertyPrice.objects.update_or_create(
+            property=expensive,
+            month_from=current_month_start,
+            defaults={
+                "month_to": current_month_end,
+                "price_on_working_days": Decimal("2000000.00"),
+                "price_on_weekends": Decimal("2000000.00"),
+                "price_per_person": Decimal("0.00"),
+            },
+        )
+        PropertyPrice.objects.update_or_create(
+            property=cheaper,
+            month_from=current_month_start,
+            defaults={
+                "month_to": current_month_end,
+                "price_on_working_days": Decimal("1000000.00"),
+                "price_on_weekends": Decimal("1000000.00"),
+                "price_per_person": Decimal("0.00"),
+            },
+        )
+        PropertyPrice.objects.filter(property=no_price).delete()
 
         request = APIRequestFactory().get("/api/property/partner/properties/?sort=price_high")
         force_authenticate(request, user=partner)
@@ -762,6 +818,62 @@ class PropertyFilterUnitTests(TestCase):
         f2 = PropertyFilter(data={"adults": 5, "children": 0}, queryset=qs)
         self.assertFalse(f2.qs.exists())
 
+    def test_filter_corporate_filters_by_property_detail_flag(self):
+        partner = Partner.objects.create(
+            first_name="P", last_name="P", username="pcorp", phone_number="+998908888888", is_active=True
+        )
+        pt = PropertyType.objects.create(
+            title_en="Apt", title_ru="Кв", title_uz="Kv", icon=self._svg_file()
+        )
+        location = PropertyLocation.objects.create(
+            latitude=Decimal("41.3"), longitude=Decimal("69.2"), city="Tashkent", country="UZ"
+        )
+        second_location = PropertyLocation.objects.create(
+            latitude=Decimal("41.31"), longitude=Decimal("69.21"), city="Tashkent", country="UZ"
+        )
+
+        corporate_allowed = Property.objects.create(
+            title="Corporate Allowed",
+            property_type=pt,
+            property_location=location,
+            partner=partner,
+        )
+        corporate_not_allowed = Property.objects.create(
+            title="Corporate Not Allowed",
+            property_type=pt,
+            property_location=second_location,
+            partner=partner,
+        )
+
+        PropertyDetail.objects.create(
+            property=corporate_allowed,
+            description_en="desc",
+            description_ru="desc",
+            description_uz="desc",
+            is_allowed_corporate=True,
+        )
+        PropertyDetail.objects.create(
+            property=corporate_not_allowed,
+            description_en="desc",
+            description_ru="desc",
+            description_uz="desc",
+            is_allowed_corporate=False,
+        )
+
+        qs = Property.objects.filter(guid__in=[corporate_allowed.guid, corporate_not_allowed.guid])
+
+        filtered_by_corporate = PropertyFilter(data={"corporate": "true"}, queryset=qs).qs
+        self.assertEqual(
+            {str(item.guid) for item in filtered_by_corporate},
+            {str(corporate_allowed.guid)},
+        )
+
+        filtered_by_alias = PropertyFilter(data={"is_allowed_corporate": "1"}, queryset=qs).qs
+        self.assertEqual(
+            {str(item.guid) for item in filtered_by_alias},
+            {str(corporate_allowed.guid)},
+        )
+
     def test_filter_property_services_invalid_uuid_returns_none(self):
         qs = Property.objects.all()
         f = PropertyFilter(data={"property_services": "not-a-uuid"}, queryset=qs)
@@ -818,6 +930,71 @@ class PropertyAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
 
+    def test_apartment_list_returns_latest_updated_price_first(self):
+        ExchangeRate.objects.create(currency="USD", rate=Decimal("12000"))
+        partner = Partner.objects.create(
+            first_name="P",
+            last_name="P",
+            username=f"partner_{uuid.uuid4().hex[:8]}",
+            phone_number=f"+99890{uuid.uuid4().int % 10**7:07d}",
+            is_active=True,
+        )
+        pt = PropertyType.objects.create(
+            title_en="Apartment",
+            title_ru="Кв",
+            title_uz="Kv",
+            icon=self._svg_file("apt.svg"),
+        )
+        loc = PropertyLocation.objects.create(
+            latitude=Decimal("41.3"),
+            longitude=Decimal("69.2"),
+            city="Tashkent",
+            country="UZ",
+        )
+        prop = Property.objects.create(
+            title=f"Ordering Apt {uuid.uuid4().hex[:6]}",
+            property_type=pt,
+            property_location=loc,
+            partner=partner,
+            currency="UZS",
+            verification_status=VerificationStatus.ACCEPTED,
+        )
+        PropertyRoom.objects.create(property=prop, guests=2, rooms=1, beds=1, bathrooms=1)
+
+        from shared.date import month_start, month_end
+
+        today = timezone.localdate()
+        current_month_start = month_start(today)
+        next_month_start = month_start(current_month_start + timedelta(days=32))
+
+        PropertyPrice.objects.create(
+            property=prop,
+            month_from=current_month_start,
+            month_to=month_end(current_month_start),
+            price_on_working_days=Decimal("610000"),
+            price_on_weekends=Decimal("610000"),
+            price_per_person=Decimal("0"),
+        )
+        newest_row = PropertyPrice.objects.create(
+            property=prop,
+            month_from=next_month_start,
+            month_to=month_end(next_month_start),
+            price_on_working_days=Decimal("730000"),
+            price_on_weekends=Decimal("730000"),
+            price_per_person=Decimal("0"),
+        )
+
+        response = self.client.get(
+            "/api/property/properties/apartments/",
+            {"search": prop.title},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+        prices = response.data[0]["price"]
+        self.assertGreaterEqual(len(prices), 2)
+        self.assertEqual(str(prices[0]["guid"]), str(newest_row.guid))
+
     def test_property_create_unauthenticated_returns_401_or_403(self):
         response = self.client.post(
             "/api/property/properties/",
@@ -854,11 +1031,23 @@ class PropertyAPITests(TestCase):
             check_out=time(12, 0),
         )
         PropertyRoom.objects.create(property=prop, guests=2, rooms=1, beds=1, bathrooms=1)
+        from shared.date import month_start, month_end
+        current_month_start = month_start(timezone.localdate())
+        PropertyPrice.objects.create(
+            property=prop,
+            month_from=current_month_start,
+            month_to=month_end(current_month_start),
+            price_on_working_days=Decimal("100"),
+            price_on_weekends=Decimal("100"),
+            price_per_person=Decimal("0"),
+        )
         response = self.client.get(
             f"/api/property/properties/{prop.guid}/"
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["title"], "API Prop")
+        self.assertIsInstance(response.data["price"], list)
+        self.assertGreaterEqual(len(response.data["price"]), 1)
 
     def test_property_retrieve_returns_404_for_nonexistent(self):
         response = self.client.get(
