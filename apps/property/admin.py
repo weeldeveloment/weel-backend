@@ -270,6 +270,7 @@ PROPERTY_DETAIL_ADMIN_PROPERTY_FIELDS = [
     "property_type",
     "img",
     "currency",
+    "price",
     "partner",
     "property_location",
     "region",
@@ -387,9 +388,8 @@ class PropertyDetailAdminForm(forms.ModelForm):
         if "verified_at" in self.fields:
             self.fields["verified_at"].required = False
         if "price" in self.fields:
-            self.fields["price"].disabled = True
-            if property_obj:
-                self.fields["price"].initial = get_effective_price_amount(property_obj)
+            if property_obj and property_obj.price is not None:
+                self.fields["price"].initial = property_obj.price
 
     def clean(self):
         data = super().clean()
@@ -475,7 +475,7 @@ class PropertyAdmin(ModelAdmin):
         "created_at",
     ]
     list_filter = ["property_type", "is_verified", "is_recommended", "created_at"]
-    readonly_fields = ["price"]
+    readonly_fields = []
     filter_horizontal = ["property_services", "categories"]
 
     inlines = [PropertyImageInline]
@@ -487,7 +487,7 @@ class PropertyAdmin(ModelAdmin):
 
     @admin.display(description=_("Price"))
     def effective_price_display(self, obj):
-        price = get_effective_price_amount(obj)
+        price = obj.price if obj.price is not None else get_effective_price_amount(obj)
         if price is None:
             return "—"
         return f"{price} {obj.currency}"
@@ -529,6 +529,7 @@ class PropertyAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
+                        "price",
                         "partner",
                     ]
                 },
@@ -571,6 +572,7 @@ class PropertyAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
+                        "price",
                         "partner",
                     ]
                 },
@@ -737,6 +739,7 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
                     "property_type",
                     "img",
                     "currency",
+                    "price",
                     "partner",
                 ]
             },
@@ -834,6 +837,7 @@ class CottagesAdmin(TypeRestrictedPropertyAdmin):
                     "property_type",
                     "img",
                     "currency",
+                    "price",
                     "partner",
                 ]
             },
@@ -941,10 +945,15 @@ class PropertyDetailAdmin(ModelAdmin):
 
     @admin.display(description=_("Price"))
     def price_display(self, obj):
-        price = get_effective_price_amount(obj.property)
+        property_obj = obj.property
+        price = (
+            property_obj.price
+            if property_obj.price is not None
+            else get_effective_price_amount(property_obj)
+        )
         if price is None:
             return "—"
-        return f"{price} {obj.property.currency}"
+        return f"{price} {property_obj.currency}"
 
     @admin.display(description=_("Verification status"))
     def verification_status_display(self, obj):
@@ -1003,6 +1012,7 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
+                        "price",
                         "partner",
                     ]
                 },
@@ -1078,6 +1088,7 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
+                        "price",
                         "partner",
                     ]
                 },
@@ -1147,6 +1158,7 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
+                        "price",
                         "partner",
                         "property_location",
                         "region",
@@ -1189,8 +1201,6 @@ class PropertyDetailAdmin(ModelAdmin):
 
         property_obj = obj.property
         for field_name in form.PROPERTY_NON_M2M_FIELDS:
-            if field_name == "price":
-                continue
             if field_name in form.cleaned_data:
                 setattr(property_obj, field_name, form.cleaned_data[field_name])
 

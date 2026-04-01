@@ -39,18 +39,6 @@ def related_prices(property_obj: Property):
     return property_obj.property_price.all().order_by("month_from", "created_at")
 
 
-def related_prices_for_response(property_obj: Property):
-    """
-    Mobile clients consume the first item from `price` list.
-    Return most recently updated row first so admin edits are visible immediately.
-    """
-    return property_obj.property_price.all().order_by(
-        "-updated_at",
-        "-month_from",
-        "-created_at",
-    )
-
-
 def get_effective_price_row(
     property_obj: Property,
     reference_date: date | None = None,

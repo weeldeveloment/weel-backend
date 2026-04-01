@@ -57,7 +57,7 @@ from payment.exchange_rate import to_uzs
 from shared.date import parse_yyyy_mm_dd, month_start
 from booking.models import Booking
 from .pricing import (
-    related_prices_for_response,
+    get_effective_price_amount,
 )
 
 
@@ -209,10 +209,14 @@ class PropertyListSerializer(serializers.ModelSerializer):
         ]
 
     def get_price(self, obj):
-        property_price = related_prices_for_response(obj)
-        if property_price.exists():
-            return PropertyListPriceSerializer(property_price, many=True).data
-        return None
+        price = obj.price
+        if price is None:
+            price = get_effective_price_amount(obj)
+        if price is None:
+            return None
+        if obj.currency == "USD":
+            return to_uzs(price)
+        return price
 
     @staticmethod
     def get_average_rating(obj):
@@ -273,10 +277,14 @@ class PartnerPropertyListSerializer(serializers.ModelSerializer):
         ]
 
     def get_price(self, obj):
-        property_price = related_prices_for_response(obj)
-        if property_price.exists():
-            return PropertyListPriceSerializer(property_price, many=True).data
-        return None
+        price = obj.price
+        if price is None:
+            price = get_effective_price_amount(obj)
+        if price is None:
+            return None
+        if obj.currency == "USD":
+            return to_uzs(price)
+        return price
 
     @staticmethod
     def get_average_rating(obj):
@@ -508,17 +516,15 @@ class PropertyDetailSerializer(LanguageFieldMixin, serializers.ModelSerializer):
         ]
 
     def get_price(self, obj):
-        request = self.context.get("request")
-        partner = getattr(request, "user")
-
-        if isinstance(partner, Partner):
-            property_price = related_prices_for_response(obj.property)
-            return PropertyPriceSerializer(property_price, many=True).data
-
-        property_price = related_prices_for_response(obj.property)
-        if property_price.exists():
-            return PropertyListPriceSerializer(property_price, many=True).data
-        return None
+        property_obj = obj.property
+        price = property_obj.price
+        if price is None:
+            price = get_effective_price_amount(property_obj)
+        if price is None:
+            return None
+        if property_obj.currency == "USD":
+            return to_uzs(price)
+        return price
 
     def get_description(self, obj):
         return self.get_lang_field(obj, "description")

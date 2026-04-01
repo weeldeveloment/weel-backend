@@ -8,6 +8,7 @@ from django.db import models
 from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
 from django.db.models.signals import pre_save, post_save, post_delete
+from django.utils import timezone
 from django.core.validators import (
     FileExtensionValidator,
     MinValueValidator,
@@ -20,6 +21,7 @@ from users.models.clients import Client
 from users.models.partners import Partner
 from shared.compress_image import property_image_compress
 from shared.models import BaseModel, HardDeleteBaseModel, VerifiedByMixin
+from shared.date import month_start, month_end
 from .manager import PropertyManager
 
 
@@ -656,17 +658,76 @@ def update_pending_property_images(sender, instance: Property, created=False, **
         ).update(is_pending=False)
 
 
+@receiver(post_save, sender=Property)
+def sync_property_prices_from_property(sender, instance: Property, created=False, **kwargs):
+    """
+    Keep PropertyPrice rows aligned with scalar Property.price.
+    We use update() to avoid recursive signal loops.
+    """
+    if instance.price is None:
+        return
+
+    previous_price = getattr(instance, "_previous_price", None)
+    if not created and previous_price == instance.price:
+        return
+
+    updated_rows = instance.property_price.update(
+        price_on_working_days=instance.price,
+        price_on_weekends=instance.price,
+    )
+
+    if updated_rows:
+        return
+
+    current_month_start = month_start(timezone.localdate())
+    PropertyPrice.objects.create(
+        property=instance,
+        month_from=current_month_start,
+        month_to=month_end(current_month_start),
+        price_per_person=Decimal("0"),
+        price_on_working_days=instance.price,
+        price_on_weekends=instance.price,
+    )
+
+
 @receiver(pre_save, sender=Property)
 def cache_property_verification_state(sender, instance: Property, **kwargs):
     if not instance.pk:
         instance._previous_is_verified = None
+        instance._previous_price = None
         return
 
-    instance._previous_is_verified = (
+    previous_state = (
         sender.objects.filter(pk=instance.pk)
-        .values_list("is_verified", flat=True)
+        .values("is_verified", "price")
         .first()
     )
+    if previous_state:
+        instance._previous_is_verified = previous_state["is_verified"]
+        instance._previous_price = previous_state["price"]
+        return
+
+    instance._previous_is_verified = None
+    instance._previous_price = None
+
+
+@receiver(post_save, sender=PropertyPrice)
+def sync_property_from_property_price(sender, instance: PropertyPrice, **kwargs):
+    """
+    Keep scalar Property.price aligned when any monthly price row changes.
+    Also keep all monthly rows unified so admin edits update a single logical price.
+    """
+    new_price = instance.price_on_working_days
+
+    if instance.price_on_weekends != new_price:
+        PropertyPrice.objects.filter(pk=instance.pk).update(price_on_weekends=new_price)
+
+    PropertyPrice.objects.filter(property=instance.property).exclude(pk=instance.pk).update(
+        price_on_working_days=new_price,
+        price_on_weekends=new_price,
+    )
+
+    Property.objects.filter(pk=instance.property_id).update(price=new_price)
 
 
 @receiver([post_save], sender=PropertyReview)
