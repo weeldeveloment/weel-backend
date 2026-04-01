@@ -988,7 +988,7 @@ class PropertyAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
 
-    def test_apartment_list_returns_single_scalar_price(self):
+    def test_apartment_list_returns_property_price_list(self):
         ExchangeRate.objects.create(currency="USD", rate=Decimal("12000"))
         partner = Partner.objects.create(
             first_name="P",
@@ -1049,7 +1049,12 @@ class PropertyAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
 
-        self.assertEqual(response.data[0]["price"], Decimal("150"))
+        prices = response.data[0]["price"]
+        self.assertIsInstance(prices, list)
+        self.assertGreaterEqual(len(prices), 2)
+        self.assertIn("price_per_person", prices[0])
+        self.assertIn("price_on_working_days", prices[0])
+        self.assertIn("price_on_weekends", prices[0])
 
     def test_property_create_unauthenticated_returns_401_or_403(self):
         response = self.client.post(
@@ -1102,7 +1107,13 @@ class PropertyAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["title"], "API Prop")
-        self.assertEqual(response.data["price"], Decimal("1200000"))
+        self.assertIsInstance(response.data["price"], list)
+        self.assertGreaterEqual(len(response.data["price"]), 1)
+        self.assertIn("price_per_person", response.data["price"][0])
+        self.assertEqual(
+            response.data["price"][0]["price_on_working_days"],
+            Decimal("1200000"),
+        )
 
     def test_property_retrieve_returns_404_for_nonexistent(self):
         response = self.client.get(

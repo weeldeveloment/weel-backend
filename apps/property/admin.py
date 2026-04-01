@@ -529,7 +529,6 @@ class PropertyAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
-                        "price",
                         "partner",
                     ]
                 },
@@ -710,10 +709,6 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
         "guid",
         "title",
         "apartment_number_display",
-        "effective_price_display",
-        "currency",
-        "region",
-        "district",
         "verification_status",
         "is_verified",
         "verified_at",
@@ -739,7 +734,6 @@ class ApartmentAdmin(TypeRestrictedPropertyAdmin):
                     "property_type",
                     "img",
                     "currency",
-                    "price",
                     "partner",
                 ]
             },
@@ -1012,7 +1006,6 @@ class PropertyDetailAdmin(ModelAdmin):
                         "property_type",
                         "img",
                         "currency",
-                        "price",
                         "partner",
                     ]
                 },
