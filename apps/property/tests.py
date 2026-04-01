@@ -235,6 +235,64 @@ class PropertyVerificationRegressionTests(TestCase):
         self.assertEqual(len(created_images), 1)
         self.assertTrue(created_images[0].is_pending)
 
+    def test_property_price_change_syncs_all_monthly_price_rows(self):
+        property_obj, _, _ = self._create_verified_property_bundle()
+        from shared.date import month_start, month_end
+
+        today = timezone.localdate()
+        current_month_start = month_start(today)
+        next_month_start = month_start(current_month_start + timedelta(days=32))
+
+        current_row = PropertyPrice.objects.create(
+            property=property_obj,
+            month_from=current_month_start,
+            month_to=month_end(current_month_start),
+            price_on_working_days=Decimal("100"),
+            price_on_weekends=Decimal("120"),
+            price_per_person=Decimal("10"),
+        )
+        next_row = PropertyPrice.objects.create(
+            property=property_obj,
+            month_from=next_month_start,
+            month_to=month_end(next_month_start),
+            price_on_working_days=Decimal("200"),
+            price_on_weekends=Decimal("220"),
+            price_per_person=Decimal("15"),
+        )
+
+        property_obj.price = Decimal("350")
+        property_obj.save(update_fields=["price"])
+
+        current_row.refresh_from_db()
+        next_row.refresh_from_db()
+        self.assertEqual(current_row.price_on_working_days, Decimal("350"))
+        self.assertEqual(current_row.price_on_weekends, Decimal("350"))
+        self.assertEqual(next_row.price_on_working_days, Decimal("350"))
+        self.assertEqual(next_row.price_on_weekends, Decimal("350"))
+
+    def test_property_price_row_change_syncs_scalar_property_price(self):
+        property_obj, _, _ = self._create_verified_property_bundle()
+        from shared.date import month_start, month_end
+
+        current_month_start = month_start(timezone.localdate())
+        row = PropertyPrice.objects.create(
+            property=property_obj,
+            month_from=current_month_start,
+            month_to=month_end(current_month_start),
+            price_on_working_days=Decimal("100"),
+            price_on_weekends=Decimal("100"),
+            price_per_person=Decimal("0"),
+        )
+
+        row.price_on_working_days = Decimal("730")
+        row.price_on_weekends = Decimal("710")
+        row.save(update_fields=["price_on_working_days", "price_on_weekends"])
+
+        property_obj.refresh_from_db()
+        row.refresh_from_db()
+        self.assertEqual(property_obj.price, Decimal("730"))
+        self.assertEqual(row.price_on_weekends, Decimal("730"))
+
     def test_booking_serializer_hides_pending_images(self):
         property_obj, _, _ = self._create_verified_property_bundle()
         PropertyImage.objects.create(
@@ -930,7 +988,7 @@ class PropertyAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
 
-    def test_apartment_list_returns_latest_updated_price_first(self):
+    def test_apartment_list_returns_single_scalar_price(self):
         ExchangeRate.objects.create(currency="USD", rate=Decimal("12000"))
         partner = Partner.objects.create(
             first_name="P",
@@ -971,16 +1029,16 @@ class PropertyAPITests(TestCase):
             property=prop,
             month_from=current_month_start,
             month_to=month_end(current_month_start),
-            price_on_working_days=Decimal("610000"),
-            price_on_weekends=Decimal("610000"),
+            price_on_working_days=Decimal("100"),
+            price_on_weekends=Decimal("100"),
             price_per_person=Decimal("0"),
         )
-        newest_row = PropertyPrice.objects.create(
+        PropertyPrice.objects.create(
             property=prop,
             month_from=next_month_start,
             month_to=month_end(next_month_start),
-            price_on_working_days=Decimal("730000"),
-            price_on_weekends=Decimal("730000"),
+            price_on_working_days=Decimal("150"),
+            price_on_weekends=Decimal("150"),
             price_per_person=Decimal("0"),
         )
 
@@ -991,9 +1049,7 @@ class PropertyAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
 
-        prices = response.data[0]["price"]
-        self.assertGreaterEqual(len(prices), 2)
-        self.assertEqual(str(prices[0]["guid"]), str(newest_row.guid))
+        self.assertEqual(response.data[0]["price"], Decimal("150"))
 
     def test_property_create_unauthenticated_returns_401_or_403(self):
         response = self.client.post(
@@ -1046,8 +1102,7 @@ class PropertyAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["title"], "API Prop")
-        self.assertIsInstance(response.data["price"], list)
-        self.assertGreaterEqual(len(response.data["price"]), 1)
+        self.assertEqual(response.data["price"], Decimal("1200000"))
 
     def test_property_retrieve_returns_404_for_nonexistent(self):
         response = self.client.get(
