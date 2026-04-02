@@ -231,6 +231,6 @@ class ChatViewSet(viewsets.GenericViewSet):
                     'partner_type': 'admin' if is_admin_actor(user) else 'partner',
                     'message_ids': message_ids,
                 },
-            )
+             )
 
         return Response({'updated': len(message_ids)}, status=status.HTTP_200_OK)
