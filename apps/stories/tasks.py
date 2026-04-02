@@ -1,9 +1,8 @@
 from celery import shared_task
 
 from django.core.cache import cache
-from django.db.models import F
 
-from .models import Story
+from .raw_repository import increment_story_views
 
 
 @shared_task()
@@ -13,12 +12,9 @@ def persist_story_views():
     for key in keys:
         guid = key.split(":")[1]
         count = cache.get(key)
-        if not count:  # if  skip
+        if not count:
             continue
 
-        story = Story.objects.filter(guid=guid).update(
-            views=F("views") + int(count),
-        )
-
-        if story:
+        updated = increment_story_views(guid, int(count))
+        if updated:
             cache.delete(key)

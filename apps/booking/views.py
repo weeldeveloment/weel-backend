@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, GenericAPIView, ListCreateAPIView
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -22,6 +22,8 @@ from users.authentication import PartnerJWTAuthentication, ClientJWTAuthenticati
 from shared.permissions import IsClient, IsPartner, IsPartnerOwnerProperty
 from admin_auth.authentication import AdminJWTAuthentication
 from admin_auth.permissions import IsAdminUser
+from .raw_calendar_service import RawCalendarDateService, RawCalendarStatus
+from .raw_repository import fetch_calendar_rows, get_verified_property_by_guid
 from .models import CalendarDate, Booking
 from .serializers import (
     CalendarDateSerializer,
@@ -34,8 +36,7 @@ from .serializers import (
     ClientBookingHistoryDetailSerializer,
     AdminBookingListSerializer,
 )
-from .filters import PropertyCalenderDateFilter
-from .services import CalendarDateService, BookingService
+from .services import BookingService
 
 property_id_param = openapi.Parameter(
     "property_id",
@@ -64,47 +65,60 @@ status_query_param = openapi.Parameter(
 # Create your views here.
 
 
+def _ensure_partner_owner(property_row: dict, partner_user) -> None:
+    owner_id = int(property_row.get("partner_user_id") or 0)
+    if owner_id != int(getattr(partner_user, "id", 0)):
+        raise PermissionDenied(_("You don't have permission to modify this property"))
+
+
 class PropertyCalendarDateListView(ListAPIView):
     permission_classes = [AllowAny]
     serializer_class = CalendarDateSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_class = PropertyCalenderDateFilter
 
     def get_property(self):
         property_id = self.kwargs["property_id"]
-
-        property = Property.objects.filter(
-            guid=property_id,
-            is_verified=True,
-        ).first()
-
-        if not property:
+        property_row = get_verified_property_by_guid(str(property_id))
+        if not property_row:
             raise NotFound(_("Property not found"))
-
-        return property
+        return property_row
 
     def list(self, request, *args, **kwargs):
         property = self.get_property()
-
-        queryset = CalendarDate.objects.filter(property=property)
-        filterset = self.filterset_class(
-            data=request.query_params,
-            queryset=queryset,
-            request=request,
+        date_range_serializer = PropertyCalendarDateRangeSerializer(
+            data={
+                "from_date": request.query_params.get("from_date"),
+                "to_date": request.query_params.get("to_date"),
+            }
         )
+        date_range_serializer.is_valid(raise_exception=True)
+        from_date = date_range_serializer.validated_data["from_date"]
+        to_date = date_range_serializer.validated_data["to_date"]
+        if from_date >= to_date:
+            raise ValidationError({"to_date": _("to_date must be greater than from_date")})
 
-        if not filterset.is_valid():
-            raise ValidationError(filterset.errors)
+        status_filter = request.query_params.get("status")
+        allowed_statuses = {
+            RawCalendarStatus.AVAILABLE,
+            RawCalendarStatus.BOOKED,
+            RawCalendarStatus.BLOCKED,
+            RawCalendarStatus.HELD,
+        }
+        if status_filter and status_filter not in allowed_statuses:
+            raise ValidationError(
+                {
+                    "status": _(
+                        "Invalid status: {status}, allowed are: {allowed}"
+                    ).format(status=status_filter, allowed=", ".join(sorted(allowed_statuses)))
+                }
+            )
 
-        from_date = filterset.form.cleaned_data["from_date"]
-        to_date = filterset.form.cleaned_data["to_date"]
-        status_filer = filterset.form.cleaned_data.get("status")
-
-        # for validation only(It won't work without it)
-        filterset_qs = filterset.qs
-
-        calendar_dates = queryset.filter(date__range=(from_date, to_date))
-        status_by_date = dict(calendar_dates.values_list("date", "status"))
+        calendar_dates = fetch_calendar_rows(
+            property_kind=property["property_kind"],
+            property_id=int(property["property_id"]),
+            from_date=from_date,
+            to_date=to_date,
+        )
+        status_by_date = {row["date"]: row["status"] for row in calendar_dates}
 
         calendar = []
         current_date = from_date
@@ -113,12 +127,12 @@ class PropertyCalendarDateListView(ListAPIView):
             if current_date in status_by_date:
                 resolved_status = status_by_date[current_date]
             else:
-                cache_key = f"calendar:hold:{property.guid}:{current_date.isoformat()}"
+                cache_key = f"calendar:hold:{property['guid']}:{current_date.isoformat()}"
                 if cache.get(cache_key):
-                    resolved_status = CalendarDate.CalendarStatus.HELD
+                    resolved_status = RawCalendarStatus.HELD
                 else:
-                    resolved_status = CalendarDate.CalendarStatus.AVAILABLE
-            if not status_filer or resolved_status == status_filer:
+                    resolved_status = RawCalendarStatus.AVAILABLE
+            if not status_filter or resolved_status == status_filter:
                 calendar.append(
                     {
                         "date": current_date,
@@ -131,7 +145,7 @@ class PropertyCalendarDateListView(ListAPIView):
         return Response(
             status=status.HTTP_200_OK,
             data={
-                "property_id": property.guid,
+                "property_id": property["guid"],
                 "range": {
                     "from_date": from_date,
                     "to_date": to_date,
@@ -152,20 +166,15 @@ class PropertyCalendarDateListView(ListAPIView):
 
 class PropertyCalendarDateBlockView(GenericAPIView):
     authentication_classes = [PartnerJWTAuthentication]
-    permission_classes = [IsPartner, IsPartnerOwnerProperty]
+    permission_classes = [IsPartner]
     serializer_class = PropertyCalendarDateRangeSerializer
 
     def get_property(self, property_id):
-        property = (
-            Property.objects.filter(guid=property_id, is_verified=True)
-            .select_related("partner")
-            .first()
-        )
-        if not property:
+        property_row = get_verified_property_by_guid(str(property_id))
+        if not property_row:
             raise NotFound(_("Property not found"))
-
-        self.check_object_permissions(self.request, property)
-        return property
+        _ensure_partner_owner(property_row, self.request.user)
+        return property_row
 
     @swagger_auto_schema(
         tags=["Booking / Calendar"],
@@ -183,8 +192,10 @@ class PropertyCalendarDateBlockView(GenericAPIView):
         to_date = serializer.validated_data["to_date"]
         is_single_day = serializer.validated_data["is_single_day"]
 
-        calendar_dates = CalendarDateService(
-            property=property,
+        calendar_dates = RawCalendarDateService(
+            property_guid=property["guid"],
+            property_kind=property["property_kind"],
+            property_id=int(property["property_id"]),
             from_date=from_date,
             to_date=to_date,
         )
@@ -192,7 +203,7 @@ class PropertyCalendarDateBlockView(GenericAPIView):
 
         data = {
             "detail": _("You have successfully blocked the booking dates"),
-            "property_id": property.guid,
+            "property_id": property["guid"],
         }
 
         if is_single_day:
@@ -213,20 +224,15 @@ class PropertyCalendarDateBlockView(GenericAPIView):
 
 class PropertyCalendarDateUnblockView(GenericAPIView):
     authentication_classes = [PartnerJWTAuthentication]
-    permission_classes = [IsPartner, IsPartnerOwnerProperty]
+    permission_classes = [IsPartner]
     serializer_class = PropertyCalendarDateRangeSerializer
 
     def get_property(self, property_id):
-        property = (
-            Property.objects.filter(guid=property_id, is_verified=True)
-            .select_related("partner")
-            .first()
-        )
-        if not property:
+        property_row = get_verified_property_by_guid(str(property_id))
+        if not property_row:
             raise NotFound(_("Property not found"))
-
-        self.check_object_permissions(self.request, property)
-        return property
+        _ensure_partner_owner(property_row, self.request.user)
+        return property_row
 
     @swagger_auto_schema(
         tags=["Booking / Calendar"],
@@ -245,14 +251,18 @@ class PropertyCalendarDateUnblockView(GenericAPIView):
         to_date = serializer.validated_data["to_date"]
         is_single_day = serializer.validated_data["is_single_day"]
 
-        calendar_dates = CalendarDateService(
-            property=property, from_date=from_date, to_date=to_date
+        calendar_dates = RawCalendarDateService(
+            property_guid=property["guid"],
+            property_kind=property["property_kind"],
+            property_id=int(property["property_id"]),
+            from_date=from_date,
+            to_date=to_date,
         )
         days = calendar_dates.unblock()
 
         data = {
             "detail": _("You have successfully unblocked the booking dates"),
-            "property_id": property.guid,
+            "property_id": property["guid"],
         }
 
         if is_single_day:
@@ -273,20 +283,15 @@ class PropertyCalendarDateUnblockView(GenericAPIView):
 
 class PropertyCalendarDateHoldView(GenericAPIView):
     authentication_classes = [PartnerJWTAuthentication]
-    permission_classes = [IsPartner, IsPartnerOwnerProperty]
+    permission_classes = [IsPartner]
     serializer_class = PropertyCalendarDateRangeSerializer
 
     def get_property(self, property_id):
-        property = (
-            Property.objects.filter(guid=property_id, is_verified=True)
-            .select_related("partner")
-            .first()
-        )
-        if not property:
+        property_row = get_verified_property_by_guid(str(property_id))
+        if not property_row:
             raise NotFound(_("Property not found"))
-
-        self.check_object_permissions(self.request, property)
-        return property
+        _ensure_partner_owner(property_row, self.request.user)
+        return property_row
 
     @swagger_auto_schema(
         tags=["Booking / Calendar"],
@@ -304,8 +309,10 @@ class PropertyCalendarDateHoldView(GenericAPIView):
         to_date = serializer.validated_data["to_date"]
         is_single_day = serializer.validated_data["is_single_day"]
 
-        calendar_dates = CalendarDateService(
-            property=property,
+        calendar_dates = RawCalendarDateService(
+            property_guid=property["guid"],
+            property_kind=property["property_kind"],
+            property_id=int(property["property_id"]),
             from_date=from_date,
             to_date=to_date,
         )
@@ -313,7 +320,7 @@ class PropertyCalendarDateHoldView(GenericAPIView):
 
         data = {
             "detail": _("You have successfully held your booking dates for 30 minutes"),
-            "property_id": property.guid,
+            "property_id": property["guid"],
         }
 
         if is_single_day:
@@ -334,20 +341,15 @@ class PropertyCalendarDateHoldView(GenericAPIView):
 
 class PropertyCalendarDateUnholdView(GenericAPIView):
     authentication_classes = [PartnerJWTAuthentication]
-    permission_classes = [IsPartner, IsPartnerOwnerProperty]
+    permission_classes = [IsPartner]
     serializer_class = PropertyCalendarDateRangeSerializer
 
     def get_property(self, property_id):
-        property = (
-            Property.objects.filter(guid=property_id, is_verified=True)
-            .select_related("partner")
-            .first()
-        )
-        if not property:
+        property_row = get_verified_property_by_guid(str(property_id))
+        if not property_row:
             raise NotFound(_("Property not found"))
-
-        self.check_object_permissions(self.request, property)
-        return property
+        _ensure_partner_owner(property_row, self.request.user)
+        return property_row
 
     @swagger_auto_schema(
         tags=["Booking / Calendar"],
@@ -365,14 +367,18 @@ class PropertyCalendarDateUnholdView(GenericAPIView):
         to_date = serializer.validated_data["to_date"]
         is_single_day = serializer.validated_data["is_single_day"]
 
-        calendar_dates = CalendarDateService(
-            property=property, from_date=from_date, to_date=to_date
+        calendar_dates = RawCalendarDateService(
+            property_guid=property["guid"],
+            property_kind=property["property_kind"],
+            property_id=int(property["property_id"]),
+            from_date=from_date,
+            to_date=to_date,
         )
         days = calendar_dates.unhold()
 
         data = {
             "detail": _("You have successfully unheld the booking dates"),
-            "property_id": property.guid,
+            "property_id": property["guid"],
         }
 
         if is_single_day:

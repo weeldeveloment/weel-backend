@@ -1,35 +1,41 @@
-import uuid
+from __future__ import annotations
 
-from django.utils import timezone
 from django.core.cache import cache
 from django.utils.translation import gettext_lazy as _
 
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 
-from rest_framework import mixins, viewsets, status
-from rest_framework.exceptions import PermissionDenied, NotFound
+from rest_framework import status, viewsets
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.generics import ListAPIView
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import Story, StoryView
-from .serializers import StoryCreateSerializer, StorySerializer, StoryDetailSerializer
-from property.models import PropertyType
-from shared.permissions import IsPartner, IsClient
-from users.authentication import PartnerJWTAuthentication, ClientJWTAuthentication
-from users.models import Client
-from users.models import Partner
+from shared.permissions import IsPartner
+from users.authentication import ClientJWTAuthentication, PartnerJWTAuthentication
+
+from .raw_repository import (
+    delete_story_for_partner,
+    delete_story_media,
+    get_story_by_guid,
+    get_story_media_by_guid,
+    list_active_stories,
+    parse_property_kind,
+)
+from .serializers import StoryCreateSerializer, StoryDetailSerializer, StorySerializer
 
 
-class StoryViewSet(
-    mixins.ListModelMixin,
-    mixins.CreateModelMixin,
-    mixins.DestroyModelMixin,
-    viewsets.GenericViewSet,
-):
-    queryset = Story.objects.all()
+def _is_partner(user) -> bool:
+    return getattr(user, "role", None) == "partner"
+
+
+def _is_client(user) -> bool:
+    return getattr(user, "role", None) == "client"
+
+
+class StoryViewSet(viewsets.GenericViewSet):
     authentication_classes = [PartnerJWTAuthentication, ClientJWTAuthentication]
     parser_classes = [MultiPartParser, FormParser]
     lookup_field = "guid"
@@ -43,33 +49,20 @@ class StoryViewSet(
         return StorySerializer
 
     def get_permissions(self):
-        if self.action in ["create", "destroy"]:
+        if self.action in ["create", "destroy", "destroy_media"]:
             return [IsPartner()]
         return [AllowAny()]
-
-    def get_queryset(self):
-        """Return only non-expired stories, newest first. Optional filter by property_type (guid)."""
-        base = Story.objects.filter(
-            expires_at__gt=timezone.now(),
-            property__is_archived=False,
-        ).order_by("-uploaded_at")
-
-        if isinstance(self.request.user, Partner):
-            return base.filter(property__partner=self.request.user)
-        base = base.filter(is_verified=True)
-        return _apply_property_type_filter(self.request, base)
 
     @swagger_auto_schema(
         tags=["Stories"],
         operation_summary="Retrieve all stories(non-expired)",
-        operation_description="For clients property_type=<uuid> is required; request without it returns 404.",
+        operation_description="For clients property_type is required; request without it returns 404.",
         manual_parameters=[
             openapi.Parameter(
                 "property_type",
                 openapi.IN_QUERY,
-                description="Property type GUID — required for client",
+                description="Property type (apartment/cottage). Required for client/public requests.",
                 type=openapi.TYPE_STRING,
-                format=openapi.FORMAT_UUID,
                 required=False,
             ),
         ],
@@ -79,9 +72,26 @@ class StoryViewSet(
         },
     )
     def list(self, request, *args, **kwargs):
-        if not isinstance(request.user, Partner) and not request.query_params.get("property_type"):
-            raise NotFound(_("Parametrlar kerak. property_type=<uuid> yuboring."))
-        return super().list(request, *args, **kwargs)
+        property_type_raw = request.query_params.get("property_type")
+        property_kind = parse_property_kind(property_type_raw)
+
+        if not _is_partner(request.user) and not property_type_raw:
+            raise NotFound(_("Parametrlar kerak. property_type yuboring."))
+
+        if _is_partner(request.user):
+            stories = list_active_stories(
+                partner_user_id=request.user.id,
+                public_only=False,
+                property_kind=property_kind,
+            )
+        else:
+            stories = list_active_stories(
+                public_only=True,
+                property_kind=property_kind,
+            )
+
+        serializer = StorySerializer(stories, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
         tags=["Story Media"],
@@ -109,52 +119,32 @@ class StoryViewSet(
         },
     )
     def retrieve_media(self, request, story_id=None, media_id=None):
-        story_qs = Story.objects.filter(
-            guid=story_id,
-            expires_at__gt=timezone.now(),
-        )
-        
-        # Check permissions/visibility
-        if isinstance(request.user, Partner):
-             # Try to find story owned by partner OR verified
-             # Actually, if I just want to view a media, and I am the owner, I should see it.
-             pass # Logic handled below by checking retrieved story
-        else:
-             story_qs = story_qs.filter(is_verified=True)
-
-        story = story_qs.order_by("-uploaded_at").first()
-
+        story = get_story_by_guid(story_id, active_only=True)
         if not story:
             raise NotFound("Story not found")
 
-        # Extra security check if it was found but not verified and user is partner
-        if not story.is_verified:
-             if not isinstance(request.user, Partner) or story.property.partner != request.user:
-                 raise NotFound("Story not found")
+        if _is_partner(request.user):
+            if not story.get("is_verified") and int(story.get("partner_user_id") or 0) != request.user.id:
+                raise NotFound("Story not found")
+        else:
+            if not story.get("is_verified"):
+                raise NotFound("Story not found")
 
-        media = story.media.filter(guid=media_id).first()
+        media = get_story_media_by_guid(int(story["id"]), media_id)
         if not media:
             raise NotFound("Media not found")
 
-        if isinstance(request.user, Client):
-            story_view = StoryView.objects.get_or_create(
-                story=story, client=request.user
-            )[1]
-
-            if story_view:
-                cache_key = f"story:{story.guid}:views"
-
-                if cache.get(cache_key) is None:
-                    cache.set(cache_key, 0)
-
-                cache.incr(cache_key)
+        if _is_client(request.user):
+            viewer_key = f"story:{story['guid']}:viewer:{request.user.id}"
+            if cache.add(viewer_key, 1, timeout=48 * 60 * 60):
+                views_key = f"story:{story['guid']}:views"
+                if cache.get(views_key) is None:
+                    cache.set(views_key, 0)
+                cache.incr(views_key)
 
         serializer = StoryDetailSerializer(
             story,
-            context={
-                "request": request,
-                "media_id": media_id,
-            },
+            context={"request": request, "media_id": media_id},
         )
         return Response(status=status.HTTP_200_OK, data=serializer.data)
 
@@ -169,7 +159,13 @@ class StoryViewSet(
         },
     )
     def create(self, request, *args, **kwargs):
-        return super().create(request, *args, **kwargs)
+        serializer = StoryCreateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        story = serializer.save()
+        return Response(
+            StorySerializer(story, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @swagger_auto_schema(
         tags=["Stories"],
@@ -190,14 +186,11 @@ class StoryViewSet(
         },
     )
     def destroy(self, request, *args, **kwargs):
-        return super().destroy(request, *args, **kwargs)
-
-    def perform_destroy(self, instance):
-        partner = self.request.user
-
-        if instance.property.partner != partner:
-            raise PermissionDenied(_("You don't have permission to delete this story"))
-        return instance.delete()
+        story_id = kwargs.get(self.lookup_url_kwarg)
+        deleted = delete_story_for_partner(story_id, request.user.id)
+        if not deleted:
+            raise NotFound("Story not found")
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @swagger_auto_schema(
         tags=["Story Media"],
@@ -223,36 +216,19 @@ class StoryViewSet(
         ],
     )
     def destroy_media(self, request, story_id=None, media_id=None):
-        story = (
-            Story.objects.filter(
-                guid=story_id,
-                expires_at__gt=timezone.now(),
-            )
-            .order_by("-uploaded_at")
-            .first()
-        )
-
+        story = get_story_by_guid(story_id, active_only=True)
         if not story:
             raise NotFound("Story not found")
 
-        # Allow owner to delete even if unverified (and verification check removed from filter above)
-        
-        partner = request.user
-        if partner != story.property.partner:
-            # If not owner, maybe 404 if unverified? or 403?
-            # Original logic was 404 if unverified.
-            if not story.is_verified:
-                 raise NotFound("Story not found")
-            
-            raise PermissionDenied(
-                _("You don't have permission to delete this story media")
-            )
+        owner_id = int(story.get("partner_user_id") or 0)
+        if request.user.id != owner_id:
+            if not story.get("is_verified"):
+                raise NotFound("Story not found")
+            raise PermissionDenied(_("You don't have permission to delete this story media"))
 
-        media = story.media.filter(guid=media_id).first()
-        if not media:
+        deleted = delete_story_media(int(story["id"]), media_id)
+        if not deleted:
             raise NotFound("Media not found")
-
-        media.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -261,17 +237,6 @@ class PartnerStoryListView(ListAPIView):
     authentication_classes = [PartnerJWTAuthentication]
     permission_classes = [IsPartner]
 
-    def get_queryset(self):
-        return (
-            Story.objects.filter(
-                property__partner=self.request.user,
-                expires_at__gt=timezone.now(),
-            )
-            .order_by("-uploaded_at")
-            .select_related("property")
-            .prefetch_related("media", "property__property_images")
-        )
-
     @swagger_auto_schema(
         tags=["Stories"],
         operation_summary="Partner's own stories",
@@ -279,21 +244,15 @@ class PartnerStoryListView(ListAPIView):
         responses={status.HTTP_200_OK: StorySerializer(many=True)},
     )
     def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-
-
-def _apply_property_type_filter(request, queryset):
-    """Filter by property_type guid (?property_type=<uuid>). Invalid or non-existent guid = no filter, return all."""
-    raw = request and request.query_params.get("property_type")
-    if not raw:
-        return queryset
-    try:
-        guid = uuid.UUID(str(raw).strip())
-    except (ValueError, TypeError):
-        return queryset
-    if not PropertyType.objects.filter(guid=guid).exists():
-        return queryset
-    return queryset.filter(property__property_type__guid=guid)
+        property_kind = parse_property_kind(request.query_params.get("property_type"))
+        stories = list_active_stories(
+            partner_user_id=request.user.id,
+            public_only=False,
+            property_kind=property_kind,
+            exclude_archived=False,
+        )
+        serializer = self.get_serializer(stories, many=True, context={"request": request})
+        return Response(serializer.data)
 
 
 class PublicStoryListView(ListAPIView):
@@ -301,30 +260,16 @@ class PublicStoryListView(ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = [ClientJWTAuthentication]
 
-    def get_queryset(self):
-        base_qs = (
-            Story.objects.filter(
-                is_verified=True,
-                expires_at__gt=timezone.now(),
-                property__is_archived=False,
-            )
-            .order_by("-uploaded_at")
-            .select_related("property", "property__property_type")
-            .prefetch_related("media", "property__property_images")
-        )
-        return _apply_property_type_filter(self.request, base_qs)
-
     @swagger_auto_schema(
         tags=["Stories"],
         operation_summary="Public stories list",
-        operation_description="Request without parameters returns 404. property_type=<uuid> must be sent.",
+        operation_description="Request without parameters returns 404. property_type must be sent.",
         manual_parameters=[
             openapi.Parameter(
                 "property_type",
                 openapi.IN_QUERY,
-                description="Property type GUID — required (e.g. dacha, sanatorium)",
+                description="Property type (apartment/cottage)",
                 type=openapi.TYPE_STRING,
-                format=openapi.FORMAT_UUID,
                 required=True,
             ),
         ],
@@ -334,7 +279,14 @@ class PublicStoryListView(ListAPIView):
         },
     )
     def get(self, request, *args, **kwargs):
-        if not request.query_params.get("property_type"):
-            raise NotFound(_("Parametrlar kerak. property_type=<uuid> yuboring."))
-        return super().get(request, *args, **kwargs)
+        property_type_raw = request.query_params.get("property_type")
+        if not property_type_raw:
+            raise NotFound(_("Parametrlar kerak. property_type yuboring."))
 
+        property_kind = parse_property_kind(property_type_raw)
+        stories = list_active_stories(
+            public_only=True,
+            property_kind=property_kind,
+        )
+        serializer = self.get_serializer(stories, many=True, context={"request": request})
+        return Response(serializer.data)

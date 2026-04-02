@@ -6,9 +6,8 @@ from rest_framework.request import Request
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import Token
 
-from .models.clients import Client
-from .models.partners import Partner
 from .tokens import TokenMetadata
+from .raw_repository import get_active_user_by_subject
 
 
 class ClientJWTAuthentication(JWTAuthentication):
@@ -35,16 +34,18 @@ class ClientJWTAuthentication(JWTAuthentication):
 
     def get_user(self, validated_token):
         try:
-            client_guid = validated_token.get(TokenMetadata.TOKEN_SUBJECT)
-            if not client_guid:
+            subject = validated_token.get(TokenMetadata.TOKEN_SUBJECT)
+            if not subject:
                 return None
 
-            client = Client.objects.get(guid=client_guid, is_active=True)
+            client = get_active_user_by_subject(subject, role="client")
+            if client is None:
+                raise exceptions.AuthenticationFailed(
+                    _("Client not found"), code="client_not_found"
+                )
             return client
-        except Client.DoesNotExist:
-            raise exceptions.AuthenticationFailed(
-                _("Client not found"), code="client_not_found"
-            )
+        except exceptions.AuthenticationFailed:
+            raise
         except Exception as e:
             logging.exception(e)
             raise exceptions.AuthenticationFailed(
@@ -76,16 +77,18 @@ class PartnerJWTAuthentication(JWTAuthentication):
 
     def get_user(self, validated_token: Token):
         try:
-            partner_guid = validated_token.get(TokenMetadata.TOKEN_SUBJECT)
-            if not partner_guid:
+            subject = validated_token.get(TokenMetadata.TOKEN_SUBJECT)
+            if not subject:
                 return None
 
-            partner = Partner.objects.get(guid=partner_guid, is_active=True)
+            partner = get_active_user_by_subject(subject, role="partner")
+            if partner is None:
+                raise exceptions.AuthenticationFailed(
+                    _("Partner not found"), code="partner_not_found"
+                )
             return partner
-        except Partner.DoesNotExist:
-            raise exceptions.AuthenticationFailed(
-                _("Partner not found"), code="partner_not_found"
-            )
+        except exceptions.AuthenticationFailed:
+            raise
         except Exception as e:
             logging.exception(e)
             raise exceptions.AuthenticationFailed(

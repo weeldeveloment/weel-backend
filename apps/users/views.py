@@ -1,10 +1,7 @@
 import logging
-from django.db import transaction
-from django.db import connection
-from django.db.utils import ProgrammingError, OperationalError, IntegrityError
 
 from rest_framework.views import APIView
-from rest_framework import status, generics, viewsets
+from rest_framework import status, viewsets
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.exceptions import TokenError
@@ -35,9 +32,6 @@ from .serializers import (
     ResendOTPSerializer,
 )
 
-from .models.clients import Client
-from .models.clients import ClientDevice, ClientSession
-from .models.partners import Partner, PartnerDevice, PartnerSession, PartnerTelegramUser
 from .models.logs import SmsPurpose
 from .services import (
     OTPRedisService,
@@ -60,6 +54,16 @@ from users.authentication import (
     PartnerJWTAuthentication,
     ClientOrPartnerJWTAuthentication,
 )
+from .raw_repository import (
+    create_client,
+    create_partner,
+    ensure_test_partner,
+    exists_partner_username,
+    exists_user_by_phone,
+    get_active_user_by_phone,
+    soft_deactivate_user,
+    update_user_profile,
+)
 
 from payment.services import PlumAPIService
 
@@ -77,9 +81,8 @@ class ClientSendOTPLoginView(APIView):
 
         phone_number = serializer.validated_data["phone_number"]
 
-        try:
-            client = Client.objects.get(phone_number=phone_number, is_active=True)
-        except Client.DoesNotExist:
+        client = get_active_user_by_phone(phone_number, role="client")
+        if client is None:
             return Response(
                 {"detail": _("Client not found. Please register first")},
                 status=status.HTTP_404_NOT_FOUND,
@@ -202,11 +205,10 @@ class ClientRegisterVerifyView(APIView):
         fcm_token = data.get("fcm_token")
         device_type = data.get("device_type")
 
-        client = Client.objects.create(
+        client = create_client(
             phone_number=phone_number,
             first_name=registration_data.get("first_name") or "",
             last_name=registration_data.get("last_name") or "",
-            is_active=True,
         )
 
         if fcm_token:
@@ -247,9 +249,7 @@ class ClientResendOTPLoginView(APIView):
 
         phone_number = serializer.validated_data["phone_number"]
 
-        if not Client.objects.filter(
-            phone_number=phone_number, is_active=True
-        ).exists():
+        if not get_active_user_by_phone(phone_number, role="client"):
             return Response(
                 {"detail": _("Client not found")},
                 status=status.HTTP_404_NOT_FOUND,
@@ -385,53 +385,12 @@ def deactivate_account(user, refresh_token=None):
         except TokenError:
             pass
 
-    try:
-        if isinstance(user, Client):
-            ClientDevice.objects.filter(client=user, is_active=True).update(is_active=False)
-            ClientSession.objects.filter(client=user).delete()
-        elif isinstance(user, Partner):
-            PartnerDevice.objects.filter(partner=user, is_active=True).update(is_active=False)
-            PartnerSession.objects.filter(partner=user).delete()
-            PartnerTelegramUser.objects.filter(partner=user, is_active=True).update(is_active=False)
-    except (ProgrammingError, OperationalError):
-        logger.exception(
-            "Skipping related cleanup during account deactivation due to missing table(s)."
-        )
-
-    if isinstance(user, (Partner, Client)):
-        table_name = "users_partner" if isinstance(user, Partner) else "users_client"
-        user_type = "partner" if isinstance(user, Partner) else "client"
-        try:
-            with transaction.atomic():
-                user.delete()
-            return
-        except (ProgrammingError, OperationalError):
-            logger.exception(
-                "ORM %s deletion failed due to schema mismatch. Falling back to raw SQL delete.",
-                user_type,
-            )
-        try:
-            with transaction.atomic():
-                with connection.cursor() as cursor:
-                    cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", [user.id])
-            return
-        except (ProgrammingError, OperationalError, IntegrityError):
-            logger.exception(
-                "Raw SQL %s deletion failed due to schema/constraint mismatch. Falling back to soft deactivation.",
-                user_type,
-            )
-            with transaction.atomic():
-                updates = {"is_active": False}
-                phone = getattr(user, "phone_number", None)
-                if phone is not None:
-                    guid_part = str(user.guid).replace("-", "")
-                    updates["phone_number"] = f"d{guid_part[:15]}"
-                if isinstance(user, Partner):
-                    guid_part = str(user.guid).replace("-", "")
-                    updates["username"] = f"deleted_{guid_part[:16]}"
-                    updates["email"] = None
-                type(user).objects.filter(id=user.id).update(**updates)
-            return
+    if not user:
+        return
+    role = getattr(user, "role", None)
+    if role not in ("client", "partner"):
+        return
+    soft_deactivate_user(user)
 
 
 class ClientLogoutView(APIView):
@@ -467,26 +426,47 @@ class ClientProfileView(APIView):
         return Response(serializer.data)
 
 
-class ClientUpdateProfileView(generics.UpdateAPIView):
+class ClientUpdateProfileView(APIView):
+    authentication_classes = (ClientJWTAuthentication,)
     permission_classes = (IsClient,)
-    serializer_class = ClientProfileSerializer
 
     @swagger_auto_schema(
         tags=["Auth - Profile"],
         request_body=ClientProfileSerializer,
     )
     def put(self, request, *args, **kwargs):
-        return super().update(request, *args, **kwargs)
+        serializer = ClientProfileSerializer(data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        updated = update_user_profile(
+            request.user.id,
+            role="client",
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            avatar=data.get("avatar"),
+        )
+        if updated is None:
+            return Response({"detail": _("Client not found")}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ClientProfileSerializer(updated).data)
 
     @swagger_auto_schema(
         tags=["Auth - Profile"],
         request_body=ClientProfileSerializer,
     )
     def patch(self, request, *args, **kwargs):
-        return super().update(request, *args, **kwargs)
-
-    def get_object(self):
-        return self.request.user
+        serializer = ClientProfileSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        updated = update_user_profile(
+            request.user.id,
+            role="client",
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            avatar=data.get("avatar"),
+        )
+        if updated is None:
+            return Response({"detail": _("Client not found")}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ClientProfileSerializer(updated).data)
 
 
 class PartnerOTPRegisterView(APIView):
@@ -556,20 +536,26 @@ class PartnerRegisterVerifyView(APIView):
 
         # partner_data["password"] = PasswordService.hash_password(unhashed_password)
 
-        if Partner.objects.filter(phone_number=phone_number).exists():
+        if exists_user_by_phone(phone_number, role="partner"):
             return Response(
                 {"detail": "User with this phone number already exists."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         username = partner_data.get("username")
-        if username and Partner.objects.filter(username__iexact=username).exists():
+        if username and exists_partner_username(username):
             return Response(
                 {"detail": "User with this username already exists."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        partner = Partner.objects.create(**partner_data)
+        partner = create_partner(
+            phone_number=partner_data["phone_number"],
+            username=partner_data["username"],
+            first_name=partner_data["first_name"],
+            last_name=partner_data["last_name"],
+            email=partner_data.get("email"),
+        )
 
         tg_user = get_telegram_user_from_request(request)
         if tg_user:
@@ -616,45 +602,17 @@ class PartnerSendOTPLoginView(APIView):
 
         phone_number = serializer.validated_data["phone_number"]
 
-        try:
-            partner = Partner.objects.get(phone_number=phone_number, is_active=True)
-        except Partner.DoesNotExist:
-            alt_phone = (
-                phone_number[1:]
-                if phone_number.startswith("+")
-                else f"+{phone_number}"
-            )
-            try:
-                partner = Partner.objects.get(
-                    phone_number=alt_phone, is_active=True
+        partner = get_active_user_by_phone(phone_number, role="partner")
+        if partner is None:
+            if OTPRedisService.is_test_phone_for_purpose(
+                phone_number, SmsPurpose.PARTNER_LOGIN
+            ):
+                partner = ensure_test_partner(phone_number)
+            else:
+                return Response(
+                    {"detail": _("Partner not found. Please register first.")},
+                    status=status.HTTP_404_NOT_FOUND,
                 )
-            except Partner.DoesNotExist:
-                if OTPRedisService.is_test_phone_for_purpose(
-                    phone_number, SmsPurpose.PARTNER_LOGIN
-                ):
-                    canonical = (
-                        phone_number
-                        if phone_number.startswith("+")
-                        else f"+{phone_number}"
-                    )
-                    phone_clean = canonical.replace("+", "").strip()
-                    if not phone_clean.startswith("998"):
-                        phone_clean = "998" + phone_clean
-                    canonical = "+" + phone_clean
-                    partner, created = Partner.objects.get_or_create(
-                        phone_number=canonical,
-                        defaults={
-                            "first_name": "Test",
-                            "last_name": "Partner",
-                            "username": f"test_partner_{phone_clean}",
-                            "is_active": True,
-                        },
-                    )
-                else:
-                    return Response(
-                        {"detail": _("Partner not found. Please register first.")},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
 
         if OTPRedisService.is_test_phone_for_purpose(
             phone_number, SmsPurpose.PARTNER_LOGIN
@@ -739,33 +697,11 @@ class PartnerResendOTPLoginView(APIView):
 
         phone_number = serializer.validated_data["phone_number"]
 
-        alt_phone = (
-            phone_number[1:]
-            if phone_number.startswith("+")
-            else f"+{phone_number}"
-        )
-        if not Partner.objects.filter(
-            phone_number__in=[phone_number, alt_phone], is_active=True
-        ).exists():
+        if not get_active_user_by_phone(phone_number, role="partner"):
             if OTPRedisService.is_test_phone_for_purpose(
                 phone_number, SmsPurpose.PARTNER_LOGIN
             ):
-                canonical = (
-                    phone_number if phone_number.startswith("+") else f"+{phone_number}"
-                )
-                phone_clean = canonical.replace("+", "").strip()
-                if not phone_clean.startswith("998"):
-                    phone_clean = "998" + phone_clean
-                canonical = "+" + phone_clean
-                Partner.objects.get_or_create(
-                    phone_number=canonical,
-                    defaults={
-                        "first_name": "Test",
-                        "last_name": "Partner",
-                        "username": f"test_partner_{phone_clean}",
-                        "is_active": True,
-                    },
-                )
+                ensure_test_partner(phone_number)
             else:
                 return Response(
                     {"detail": _("Partner not found")},
@@ -967,26 +903,49 @@ class OwnAccountView(APIView):
         )
 
 
-class PartnerUpdateView(generics.UpdateAPIView):
+class PartnerUpdateView(APIView):
+    authentication_classes = (PartnerJWTAuthentication,)
     permission_classes = (IsPartner,)
-    serializer_class = PartnerProfileSerializer
 
     @swagger_auto_schema(
         tags=["Auth - Profile"],
         request_body=PartnerProfileSerializer,
     )
     def put(self, request, *args, **kwargs):
-        return super().update(request, *args, **kwargs)
+        serializer = PartnerProfileSerializer(data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        updated = update_user_profile(
+            request.user.id,
+            role="partner",
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            username=data.get("username"),
+            avatar=data.get("avatar"),
+        )
+        if updated is None:
+            return Response({"detail": _("Partner not found")}, status=status.HTTP_404_NOT_FOUND)
+        return Response(PartnerProfileSerializer(updated).data)
 
     @swagger_auto_schema(
         tags=["Auth - Profile"],
         request_body=PartnerProfileSerializer,
     )
     def patch(self, request, *args, **kwargs):
-        return super().update(request, *args, **kwargs)
-
-    def get_object(self):
-        return self.request.user
+        serializer = PartnerProfileSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        updated = update_user_profile(
+            request.user.id,
+            role="partner",
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            username=data.get("username"),
+            avatar=data.get("avatar"),
+        )
+        if updated is None:
+            return Response({"detail": _("Partner not found")}, status=status.HTTP_404_NOT_FOUND)
+        return Response(PartnerProfileSerializer(updated).data)
 
 
 class PartnerPassportUploadView(APIView):
@@ -1014,24 +973,15 @@ class PartnerPassportUploadView(APIView):
         },
     )
     def post(self, request):
-        partner = request.user
-
-        serializer = PartnerPassportUploadSerializer(
-            data=request.data,
-            context={"partner": partner},
-        )
-
+        serializer = PartnerPassportUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        document = serializer.save()
-
         return Response(
             {
-                "id": document.id,
-                "type": document.get_type_display(),
-                "document": document.document.url,
-                "is_verified": document.is_verified,
+                "detail": _(
+                    "Passport upload is temporarily disabled in normalized raw-sql mode."
+                )
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
 

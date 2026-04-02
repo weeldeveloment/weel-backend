@@ -1,9 +1,8 @@
-from rest_framework import serializers
-from .models import ChatMessage
-from django.contrib.auth import get_user_model
-from users.models.partners import Partner
+from __future__ import annotations
 
-User = get_user_model()
+from rest_framework import serializers
+
+from shared.raw.entities import RawUser
 
 
 class ActorSerializer(serializers.Serializer):
@@ -15,21 +14,26 @@ class ActorSerializer(serializers.Serializer):
     phone_number = serializers.CharField(allow_blank=True, required=False)
 
     @staticmethod
-    def from_admin(user: User):
+    def from_admin(user: RawUser):
         first_name = (getattr(user, 'first_name', '') or '').strip()
         last_name = (getattr(user, 'last_name', '') or '').strip()
-        full_name = f"{first_name} {last_name}".strip() or getattr(user, 'email', '') or str(user)
+        full_name = (
+            f"{first_name} {last_name}".strip()
+            or getattr(user, 'email', '')
+            or getattr(user, 'username', '')
+            or str(user.id)
+        )
         return {
             'id': user.id,
             'role': 'admin',
             'full_name': full_name,
             'email': getattr(user, 'email', '') or '',
             'username': getattr(user, 'username', '') or '',
-            'phone_number': '',
+            'phone_number': getattr(user, 'phone_number', '') or '',
         }
 
     @staticmethod
-    def from_partner(partner: Partner):
+    def from_partner(partner: RawUser):
         full_name = f"{(partner.first_name or '').strip()} {(partner.last_name or '').strip()}".strip() or partner.username
         return {
             'id': partner.id,
@@ -41,38 +45,35 @@ class ActorSerializer(serializers.Serializer):
         }
 
 
-class ChatMessageSerializer(serializers.ModelSerializer):
+class ChatMessageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    conversation_id = serializers.IntegerField()
     sender_id = serializers.SerializerMethodField()
     receiver_id = serializers.SerializerMethodField()
     sender_type = serializers.SerializerMethodField()
     receiver_type = serializers.SerializerMethodField()
+    content = serializers.CharField()
+    is_read = serializers.BooleanField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
 
-    class Meta:
-        model = ChatMessage
-        fields = [
-            'id',
-            'conversation_id',
-            'sender_id',
-            'receiver_id',
-            'sender_type',
-            'receiver_type',
-            'content',
-            'is_read',
-            'created_at',
-            'updated_at',
-        ]
+    @staticmethod
+    def _value(obj, key: str):
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
 
-    def get_sender_id(self, obj: ChatMessage):
-        return obj.sender_id
+    def get_sender_id(self, obj):
+        return self._value(obj, 'sender_user_id') or self._value(obj, 'sender_id')
 
-    def get_receiver_id(self, obj: ChatMessage):
-        return obj.receiver_id
+    def get_receiver_id(self, obj):
+        return self._value(obj, 'receiver_user_id') or self._value(obj, 'receiver_id')
 
-    def get_sender_type(self, obj: ChatMessage):
-        return obj.sender_type
+    def get_sender_type(self, obj):
+        return self._value(obj, 'sender_role') or self._value(obj, 'sender_type')
 
-    def get_receiver_type(self, obj: ChatMessage):
-        return obj.receiver_type
+    def get_receiver_type(self, obj):
+        return self._value(obj, 'receiver_role') or self._value(obj, 'receiver_type')
 
 
 class ConversationSerializer(serializers.Serializer):

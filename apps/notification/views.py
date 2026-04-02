@@ -12,13 +12,16 @@ from .serializers import (
     ClientDeviceSerializer,
     PartnerDeviceSerializer,
     PartnerNotificationSerializer,
-    PartnerNotificationListSerializer,
     MarkAsReadSerializer,
 )
 from shared.permissions import IsClient, IsPartner
 from users.services import ClientDeviceService, PartnerDeviceService
 from users.authentication import ClientJWTAuthentication, PartnerJWTAuthentication
-from .models import PartnerNotification
+from .raw_repository import (
+    count_partner_notifications,
+    list_partner_notifications,
+    mark_partner_notifications_as_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,25 +182,25 @@ class PartnerNotificationListView(APIView):
     )
     def get(self, request):
         partner = request.user
-        
-        # Get all notifications for partner
-        notifications = PartnerNotification.objects.filter(partner=partner)
-        
-        # Pagination
-        paginator = self.pagination_class()
-        page = paginator.paginate_queryset(notifications, request)
-        
-        # Serialize
-        serializer = PartnerNotificationSerializer(page, many=True)
-        
-        # Get counts
-        total = notifications.count()
-        unread_count = notifications.filter(is_read=False).count()
-        
+
+        page_number = int(request.query_params.get("page", 1) or 1)
+        limit = int(request.query_params.get("limit", self.pagination_class.page_size) or self.pagination_class.page_size)
+        limit = max(1, min(limit, self.pagination_class.max_page_size))
+        page_number = max(1, page_number)
+        offset = (page_number - 1) * limit
+
+        notifications = list_partner_notifications(
+            partner_user_id=partner.id,
+            limit=limit,
+            offset=offset,
+        )
+        serializer = PartnerNotificationSerializer(notifications, many=True)
+        counts = count_partner_notifications(partner.id)
+
         return Response({
             "notifications": serializer.data,
-            "total": total,
-            "unread_count": unread_count
+            "total": counts["total"],
+            "unread_count": counts["unread_count"]
         })
 
 
@@ -229,27 +232,14 @@ class PartnerNotificationMarkAsReadView(APIView):
         partner = request.user
         serializer = MarkAsReadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         notification_ids = serializer.validated_data.get('notification_ids', [])
-        
-        if notification_ids:
-            # Mark specific notifications as read
-            notifications = PartnerNotification.objects.filter(
-                partner=partner,
-                guid__in=notification_ids,
-                is_read=False
-            )
-        else:
-            # Mark all as read
-            notifications = PartnerNotification.objects.filter(
-                partner=partner,
-                is_read=False
-            )
-        
-        count = notifications.count()
-        for notification in notifications:
-            notification.mark_as_read()
-        
+
+        count = mark_partner_notifications_as_read(
+            partner_user_id=partner.id,
+            notification_guids=notification_ids or None,
+        )
+
         return Response({
             "detail": "Notifications marked as read",
             "marked_count": count
@@ -280,16 +270,12 @@ class PartnerNotificationMarkAllAsReadView(APIView):
     )
     def post(self, request):
         partner = request.user
-        
-        notifications = PartnerNotification.objects.filter(
-            partner=partner,
-            is_read=False
+
+        count = mark_partner_notifications_as_read(
+            partner_user_id=partner.id,
+            notification_guids=None,
         )
-        
-        count = notifications.count()
-        for notification in notifications:
-            notification.mark_as_read()
-        
+
         return Response({
             "detail": "All notifications marked as read",
             "marked_count": count

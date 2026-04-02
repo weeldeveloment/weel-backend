@@ -628,7 +628,6 @@ class PropertyListCreateView(ListCreateAPIView):
             else "property_price__price_on_working_days"
         )
 
-        # Partner sees own properties (verified + unverified), public sees verified only.
         if isinstance(self.request.user, Partner):
             base_qs = Property.objects.filter(partner=self.request.user)
         else:

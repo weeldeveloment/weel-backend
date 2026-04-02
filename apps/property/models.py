@@ -24,10 +24,6 @@ from shared.models import BaseModel, HardDeleteBaseModel, VerifiedByMixin
 from shared.date import month_start, month_end
 from .manager import PropertyManager
 
-
-# Create your models here.
-
-
 class PropertyType(BaseModel):
     title_en = models.CharField(max_length=55, verbose_name=_("Title (en)"))
     title_ru = models.CharField(max_length=55, verbose_name=_("Title (ru)"))

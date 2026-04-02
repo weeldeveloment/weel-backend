@@ -1,4 +1,3 @@
-import uuid
 from typing import Final
 
 from django.conf import settings
@@ -7,21 +6,12 @@ from rest_framework.request import Request
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken, UntypedToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
-from .models.clients import Client, ClientSession
-from .models.partners import Partner, PartnerSession
+from shared.raw.entities import RawUser
 
 
 class CustomRefreshToken(RefreshToken):
     def blacklist(self):
         try:
-            user_type = self.get("user_type")
-            if user_type == "client":
-                user = Client.objects.get(guid=self["sub"])
-            elif user_type == "partner":
-                user = Partner.objects.get(guid=self["sub"])
-            else:
-                return
-
             super().blacklist()
         except Exception:
             pass
@@ -45,19 +35,14 @@ def get_user_ip(request: Request):
     return ip
 
 
-def create_client_session(client: Client, request: Request):
-    user_agent = request.META.get("HTTP_USER_AGENT", "")
-    device_id = request.META.get("HTTP_X_DEVICE_ID")
-    last_ip = get_user_ip(request)
-
-    session = ClientSession.objects.create(
-        client=client, device_id=device_id, user_agent=user_agent, last_ip=last_ip
-    )
-    return session
+def create_client_session(client: RawUser, request: Request):
+    # Legacy session tables do not exist in normalized 14-table schema.
+    # Kept as no-op to preserve call sites and response logic.
+    return None
 
 
 
-def create_client_tokens(client: Client, request: Request):
+def create_client_tokens(client: RawUser, request: Request):
     refresh = CustomRefreshToken()
     access = AccessToken()
 
@@ -74,7 +59,7 @@ def create_client_tokens(client: Client, request: Request):
     refresh[TokenMetadata.TOKEN_TYPE_CLAIM] = "refresh"
     access[TokenMetadata.TOKEN_TYPE_CLAIM] = "access"
 
-    session = create_client_session(client, request)
+    create_client_session(client, request)
 
     return {
         "refresh": str(refresh),
@@ -82,18 +67,13 @@ def create_client_tokens(client: Client, request: Request):
     }
 
 
-def create_partner_session(partner: Partner, request: Request):
-    user_agent = request.META.get("HTTP_USER_AGENT", "")
-    device_id = request.META.get("HTTP_X_DEVICE_ID")
-    last_ip = get_user_ip(request)
-
-    session = PartnerSession.objects.create(
-        partner=partner, device_id=device_id, user_agent=user_agent, last_ip=last_ip
-    )
-    return session
+def create_partner_session(partner: RawUser, request: Request):
+    # Legacy session tables do not exist in normalized 14-table schema.
+    # Kept as no-op to preserve call sites and response logic.
+    return None
 
 
-def create_partner_tokens(partner: Partner, request: Request):
+def create_partner_tokens(partner: RawUser, request: Request):
     refresh = CustomRefreshToken()
     access = AccessToken()
 
@@ -110,7 +90,7 @@ def create_partner_tokens(partner: Partner, request: Request):
     refresh[TokenMetadata.TOKEN_TYPE_CLAIM] = "refresh"
     access[TokenMetadata.TOKEN_TYPE_CLAIM] = "access"
 
-    session = create_partner_session(partner, request)
+    create_partner_session(partner, request)
 
     return {
         "refresh": str(refresh),

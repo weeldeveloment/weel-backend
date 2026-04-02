@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -9,6 +10,7 @@ from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError
 from django.db.utils import ProgrammingError
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
@@ -50,6 +52,7 @@ from .views import (
     deactivate_account,
 )
 from .authentication import ClientJWTAuthentication, PartnerJWTAuthentication
+from property.models import Property, PropertyLocation, PropertyType
 
 logging.getLogger("django.request").setLevel(logging.ERROR)
 
@@ -149,6 +152,7 @@ class SmsLogModelTests(TestCase):
         self.assertEqual(SmsPurpose.REGISTER.value, "CL_RGR")
         self.assertEqual(SmsPurpose.PARTNER_LOGIN.value, "PR_LGN")
         self.assertEqual(SmsPurpose.PARTNER_REGISTER.value, "PR_RGR")
+        self.assertEqual(SmsPurpose.PARTNER_PROPERTY_REMINDER.value, "PR_RMD")
 
 
 # ──────────────────────────────────────────────
@@ -584,6 +588,112 @@ class SendPartnerTelegramMsgTaskTests(TestCase):
         result = send_partner_telegram_msg(partner.id, "Hello")
         self.assertIn("Skipped", result)
         self.assertIn("No active Telegram", result)
+
+
+class SendPartnerPropertyReminderTaskTests(TestCase):
+    @staticmethod
+    def _svg_file(name="icon.svg"):
+        return SimpleUploadedFile(
+            name,
+            b'<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+            content_type="image/svg+xml",
+        )
+
+    def _create_property_for_partner(self, partner):
+        property_type = PropertyType.objects.create(
+            title_en=f"Reminder type {uuid.uuid4().hex[:6]}",
+            title_ru="Тип",
+            title_uz="Tur",
+            icon=self._svg_file(),
+        )
+        location = PropertyLocation.objects.create(
+            latitude="41.2995",
+            longitude="69.2401",
+            city="Tashkent",
+            country="Uzbekistan",
+        )
+        return Property.objects.create(
+            title=f"Reminder property {uuid.uuid4().hex[:6]}",
+            property_type=property_type,
+            property_location=location,
+            partner=partner,
+            is_archived=False,
+        )
+
+    @patch("users.tasks.EskizService")
+    def test_send_partner_property_check_reminders_sends_sms_for_partner_with_property(
+        self, mock_eskiz_class
+    ):
+        from users.tasks import (
+            PARTNER_PROPERTY_CHECK_REMINDER_TEXT,
+            send_partner_property_check_reminders,
+        )
+
+        partner = make_partner(phone_number="+998901111111")
+        self._create_property_for_partner(partner)
+
+        mock_eskiz = mock_eskiz_class.return_value
+        mock_eskiz.send_text_sms.return_value = {"status_code": 200}
+
+        result = send_partner_property_check_reminders()
+
+        mock_eskiz.send_text_sms.assert_called_once_with(
+            phone_number=partner.phone_number,
+            message=PARTNER_PROPERTY_CHECK_REMINDER_TEXT,
+        )
+        self.assertTrue(
+            SmsLog.objects.filter(
+                phone_number=partner.phone_number,
+                purpose=SmsPurpose.PARTNER_PROPERTY_REMINDER,
+                is_sent=True,
+            ).exists()
+        )
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["failed"], 0)
+
+    @patch("users.tasks.EskizService")
+    def test_send_partner_property_check_reminders_skips_recent_sms(
+        self, mock_eskiz_class
+    ):
+        from users.tasks import send_partner_property_check_reminders
+
+        partner = make_partner(phone_number="+998902222222")
+        self._create_property_for_partner(partner)
+        SmsLog.objects.create(
+            phone_number=partner.phone_number,
+            purpose=SmsPurpose.PARTNER_PROPERTY_REMINDER,
+            is_sent=True,
+        )
+
+        result = send_partner_property_check_reminders()
+
+        mock_eskiz_class.return_value.send_text_sms.assert_not_called()
+        self.assertEqual(result["sent"], 0)
+        self.assertEqual(result["skipped_recent"], 1)
+
+    @patch("users.tasks.EskizService")
+    def test_send_partner_property_check_reminders_sends_again_after_3_days(
+        self, mock_eskiz_class
+    ):
+        from users.tasks import send_partner_property_check_reminders
+
+        partner = make_partner(phone_number="+998903333333")
+        self._create_property_for_partner(partner)
+        old_log = SmsLog.objects.create(
+            phone_number=partner.phone_number,
+            purpose=SmsPurpose.PARTNER_PROPERTY_REMINDER,
+            is_sent=True,
+        )
+        SmsLog.objects.filter(pk=old_log.pk).update(
+            created_at=timezone.now() - timedelta(days=4)
+        )
+
+        mock_eskiz_class.return_value.send_text_sms.return_value = {"status_code": 200}
+
+        result = send_partner_property_check_reminders()
+
+        mock_eskiz_class.return_value.send_text_sms.assert_called_once()
+        self.assertEqual(result["sent"], 1)
 
 
 # ──────────────────────────────────────────────

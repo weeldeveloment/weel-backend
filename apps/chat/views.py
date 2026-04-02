@@ -1,19 +1,28 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import BasePermission
-from django.db.models import Q
-from django.contrib.auth import get_user_model
+from __future__ import annotations
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from apps.admin_auth.authentication import AdminJWTAuthentication
-from users.authentication import PartnerJWTAuthentication
-from users.models.partners import Partner
-from notification.service import NotificationService
-from .models import Conversation, ChatMessage
-from .serializers import ChatMessageSerializer, ConversationSerializer, ActorSerializer
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import BasePermission
+from rest_framework.response import Response
 
-User = get_user_model()
+from notification.service import NotificationService
+from users.authentication import PartnerJWTAuthentication
+
+from .authentication import RawAdminJWTAuthentication
+from .raw_repository import (
+    create_chat_message,
+    get_active_actor,
+    get_first_active_admin,
+    get_or_create_conversation,
+    list_conversations_for_actor,
+    list_messages_for_conversation,
+    mark_conversation_messages_read,
+    mark_message_ids_read,
+    touch_conversation,
+)
+from .serializers import ActorSerializer, ChatMessageSerializer, ConversationSerializer
 
 
 class IsAuthenticatedActor(BasePermission):
@@ -24,15 +33,15 @@ class IsAuthenticatedActor(BasePermission):
 
 
 def is_admin_actor(user) -> bool:
-    return isinstance(user, User)
+    return getattr(user, "role", None) == "admin"
 
 
 def is_partner_actor(user) -> bool:
-    return isinstance(user, Partner)
+    return getattr(user, "role", None) == "partner"
 
 
 class ChatViewSet(viewsets.GenericViewSet):
-    authentication_classes = [AdminJWTAuthentication, PartnerJWTAuthentication]
+    authentication_classes = [RawAdminJWTAuthentication, PartnerJWTAuthentication]
     permission_classes = [IsAuthenticatedActor]
     serializer_class = ChatMessageSerializer
 
@@ -53,123 +62,110 @@ class ChatViewSet(viewsets.GenericViewSet):
             },
         )
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=["get"])
     def conversations(self, request):
         """Get all conversations for the current actor."""
         user = request.user
 
         if is_admin_actor(user):
-            queryset = Conversation.objects.filter(admin_user=user).select_related('partner').order_by('-updated_at')
+            items = list_conversations_for_actor(user.id, "admin")
+            payload = [
+                {
+                    "counterpart": ActorSerializer.from_partner(item["counterpart"]),
+                    "conversation_id": item["conversation_id"],
+                    "last_message": item["last_message"],
+                    "unread_count": item["unread_count"],
+                }
+                for item in items
+            ]
         elif is_partner_actor(user):
-            queryset = Conversation.objects.filter(partner=user).select_related('admin_user').order_by('-updated_at')
+            items = list_conversations_for_actor(user.id, "partner")
+            payload = [
+                {
+                    "counterpart": ActorSerializer.from_admin(item["counterpart"]),
+                    "conversation_id": item["conversation_id"],
+                    "last_message": item["last_message"],
+                    "unread_count": item["unread_count"],
+                }
+                for item in items
+            ]
         else:
             return Response([], status=status.HTTP_200_OK)
 
-        conversations = []
-        for conversation in queryset:
-            last_message = conversation.messages.order_by('-created_at').first()
-
-            if is_admin_actor(user):
-                unread_count = conversation.messages.filter(
-                    receiver_admin=user,
-                    sender_partner__isnull=False,
-                    is_read=False,
-                ).count()
-                counterpart = ActorSerializer.from_partner(conversation.partner)
-            else:
-                unread_count = conversation.messages.filter(
-                    receiver_partner=user,
-                    sender_admin__isnull=False,
-                    is_read=False,
-                ).count()
-                counterpart = ActorSerializer.from_admin(conversation.admin_user)
-
-            conversations.append({
-                'counterpart': counterpart,
-                'conversation_id': conversation.id,
-                'last_message': last_message,
-                'unread_count': unread_count,
-            })
-
-        serializer = ConversationSerializer(conversations, many=True)
+        serializer = ConversationSerializer(payload, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], url_path='messages/(?P<partner_id>[^/.]+)')
+    @action(detail=False, methods=["get"], url_path="messages/(?P<partner_id>[^/.]+)")
     def messages(self, request, partner_id=None):
         """Get all messages with a specific counterpart."""
         user = request.user
 
-        conversation = None
+        try:
+            counterpart_id = int(partner_id)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid partner id"}, status=status.HTTP_400_BAD_REQUEST)
+
         if is_admin_actor(user):
-            partner = Partner.objects.filter(id=partner_id).first()
+            partner = get_active_actor(counterpart_id, "partner")
             if not partner:
-                return Response({'error': 'Partner not found'}, status=status.HTTP_404_NOT_FOUND)
-            conversation, _ = Conversation.objects.get_or_create(admin_user=user, partner=partner)
+                return Response({"error": "Partner not found"}, status=status.HTTP_404_NOT_FOUND)
+            conversation = get_or_create_conversation(admin_user_id=user.id, partner_user_id=partner.id)
         elif is_partner_actor(user):
-            admin_user = User.objects.filter(id=partner_id, is_active=True).first()
+            admin_user = get_active_actor(counterpart_id, "admin")
             if not admin_user:
-                return Response({'error': 'Admin user not found'}, status=status.HTTP_404_NOT_FOUND)
-            conversation, _ = Conversation.objects.get_or_create(admin_user=admin_user, partner=user)
+                return Response({"error": "Admin user not found"}, status=status.HTTP_404_NOT_FOUND)
+            conversation = get_or_create_conversation(admin_user_id=admin_user.id, partner_user_id=user.id)
         else:
-            return Response({'error': 'Unauthorized actor'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"error": "Unauthorized actor"}, status=status.HTTP_403_FORBIDDEN)
 
-        messages = conversation.messages.order_by('created_at')
-
-        if is_admin_actor(user):
-            conversation.messages.filter(receiver_admin=user, is_read=False).update(is_read=True)
-        else:
-            conversation.messages.filter(receiver_partner=user, is_read=False).update(is_read=True)
+        messages = list_messages_for_conversation(conversation.id)
+        mark_conversation_messages_read(
+            conversation_id=conversation.id,
+            receiver_user_id=user.id,
+            receiver_role=user.role,
+        )
 
         serializer = ChatMessageSerializer(messages, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=["post"])
     def send(self, request):
         """Send a message to counterpart actor."""
-        receiver_id = request.data.get('receiver_id')
-        content = request.data.get('content', '').strip()
-
-        if not receiver_id or not content:
+        raw_receiver_id = request.data.get("receiver_id")
+        content = (request.data.get("content") or "").strip()
+        if raw_receiver_id in (None, "") or not content:
             return Response(
-                {'error': 'receiver_id and content are required'},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": "receiver_id and content are required"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        try:
+            requested_receiver_id = int(raw_receiver_id)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid receiver_id"}, status=status.HTTP_400_BAD_REQUEST)
 
         sender = request.user
         if is_admin_actor(sender):
-            partner = Partner.objects.filter(id=receiver_id).first()
+            partner = get_active_actor(requested_receiver_id, "partner")
             if not partner:
-                return Response({'error': 'Partner not found'}, status=status.HTTP_404_NOT_FOUND)
-            conversation, _ = Conversation.objects.get_or_create(admin_user=sender, partner=partner)
-            message = ChatMessage.objects.create(
-                conversation=conversation,
-                sender_admin=sender,
-                receiver_partner=partner,
+                return Response({"error": "Partner not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            conversation = get_or_create_conversation(admin_user_id=sender.id, partner_user_id=partner.id)
+            message = create_chat_message(
+                conversation_id=conversation.id,
+                sender_user_id=sender.id,
+                receiver_user_id=partner.id,
+                sender_role="admin",
+                receiver_role="partner",
                 content=content,
             )
-        elif is_partner_actor(sender):
-            admin_user = User.objects.filter(id=receiver_id, is_active=True).first()
-            if not admin_user:
-                admin_user = User.objects.filter(is_active=True, is_staff=True).order_by('id').first()
-            if not admin_user:
-                return Response({'error': 'No admin user available'}, status=status.HTTP_400_BAD_REQUEST)
+            touch_conversation(conversation.id)
 
-            conversation, _ = Conversation.objects.get_or_create(admin_user=admin_user, partner=sender)
-            message = ChatMessage.objects.create(
-                conversation=conversation,
-                sender_partner=sender,
-                receiver_admin=admin_user,
-                content=content,
+            sender_name = (
+                f"{(sender.first_name or '').strip()} {(sender.last_name or '').strip()}".strip()
+                or sender.username
+                or "Admin"
             )
-        else:
-            return Response({'error': 'Unauthorized actor'}, status=status.HTTP_403_FORBIDDEN)
-
-        conversation.save(update_fields=['updated_at'])
-        serializer = ChatMessageSerializer(message)
-        data = serializer.data
-
-        if is_admin_actor(sender):
-            sender_name = getattr(sender, "get_full_name", lambda: "")() or getattr(sender, "username", "") or "Admin"
             message_preview = content if len(content) <= 120 else f"{content[:117]}..."
             NotificationService.send_to_partner(
                 partner=partner,
@@ -188,49 +184,71 @@ class ChatViewSet(viewsets.GenericViewSet):
                     "sender_name": sender_name,
                 },
             )
+        elif is_partner_actor(sender):
+            admin_user = get_active_actor(requested_receiver_id, "admin")
+            if not admin_user:
+                admin_user = get_first_active_admin()
+            if not admin_user:
+                return Response({"error": "No admin user available"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Push to receiver and sender sockets to keep both clients in sync when REST endpoint is used.
-        receiver_type = data.get('receiver_type')
-        receiver_id = data.get('receiver_id')
-        sender_type = data.get('sender_type')
-        sender_id = data.get('sender_id')
+            conversation = get_or_create_conversation(admin_user_id=admin_user.id, partner_user_id=sender.id)
+            message = create_chat_message(
+                conversation_id=conversation.id,
+                sender_user_id=sender.id,
+                receiver_user_id=admin_user.id,
+                sender_role="partner",
+                receiver_role="admin",
+                content=content,
+            )
+            touch_conversation(conversation.id)
+        else:
+            return Response({"error": "Unauthorized actor"}, status=status.HTTP_403_FORBIDDEN)
+
+        data = ChatMessageSerializer(message).data
+
+        receiver_type = data.get("receiver_type")
+        receiver_id = data.get("receiver_id")
+        sender_type = data.get("sender_type")
+        sender_id = data.get("sender_id")
 
         if receiver_type and receiver_id:
-            self._push_ws_event(receiver_type, int(receiver_id), 'chat_message', data)
+            self._push_ws_event(receiver_type, int(receiver_id), "chat_message", data)
         if sender_type and sender_id:
-            self._push_ws_event(sender_type, int(sender_id), 'chat_message', data)
+            self._push_ws_event(sender_type, int(sender_id), "chat_message", data)
 
         return Response(data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=['post'], url_path='read')
+    @action(detail=False, methods=["post"], url_path="read")
     def read_messages(self, request):
-        message_ids = request.data.get('message_ids') or []
+        message_ids = request.data.get("message_ids") or []
         if not isinstance(message_ids, list):
-            return Response({'error': 'message_ids must be a list'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "message_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
-        queryset = ChatMessage.objects.filter(id__in=message_ids)
-        if is_admin_actor(user):
-            queryset = queryset.filter(receiver_admin=user)
-        elif is_partner_actor(user):
-            queryset = queryset.filter(receiver_partner=user)
-        else:
-            return Response({'error': 'Unauthorized actor'}, status=status.HTTP_403_FORBIDDEN)
+        if not (is_admin_actor(user) or is_partner_actor(user)):
+            return Response({"error": "Unauthorized actor"}, status=status.HTTP_403_FORBIDDEN)
 
-        queryset.update(is_read=True)
+        updated_count = mark_message_ids_read(
+            message_ids=message_ids,
+            receiver_user_id=user.id,
+            receiver_role=user.role,
+        )
 
-        partner_id = request.data.get('partner_id')
-        partner_type = request.data.get('partner_type')
+        partner_id = request.data.get("partner_id")
+        partner_type = request.data.get("partner_type")
         if partner_id and partner_type:
-            self._push_ws_event(
-                str(partner_type),
-                int(partner_id),
-                'messages_read',
-                {
-                    'partner_id': getattr(user, 'id', None),
-                    'partner_type': 'admin' if is_admin_actor(user) else 'partner',
-                    'message_ids': message_ids,
-                },
-            )
+            try:
+                self._push_ws_event(
+                    str(partner_type),
+                    int(partner_id),
+                    "messages_read",
+                    {
+                        "partner_id": user.id,
+                        "partner_type": "admin" if is_admin_actor(user) else "partner",
+                        "message_ids": message_ids,
+                    },
+                )
+            except (TypeError, ValueError):
+                pass
 
-        return Response({'updated': len(message_ids)}, status=status.HTTP_200_OK)
+        return Response({"updated": updated_count}, status=status.HTTP_200_OK)

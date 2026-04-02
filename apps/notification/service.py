@@ -2,9 +2,8 @@ import logging
 
 from firebase_admin import messaging
 
-from users.models import Client
-from users.models.partners import Partner
-from .models import Notification, PartnerNotification
+from shared.raw.db import execute, fetch_all, table_exists
+from .raw_repository import create_notification
 
 
 logger = logging.getLogger(__name__)
@@ -23,16 +22,26 @@ class FCMService:
     def _deactivate_invalid_tokens(tokens: list[str]):
         if not tokens:
             return
-
-        from users.models.clients import ClientDevice
-        from users.models.partners import PartnerDevice
-
-        ClientDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
-            is_active=False
-        )
-        PartnerDevice.objects.filter(fcm_token__in=tokens, is_active=True).update(
-            is_active=False
-        )
+        if table_exists("client_devices"):
+            execute(
+                """
+                UPDATE public.client_devices
+                SET is_active = FALSE
+                WHERE is_active = TRUE
+                  AND fcm_token = ANY(%s)
+                """,
+                [tokens],
+            )
+        if table_exists("partner_devices"):
+            execute(
+                """
+                UPDATE public.partner_devices
+                SET is_active = FALSE
+                WHERE is_active = TRUE
+                  AND fcm_token = ANY(%s)
+                """,
+                [tokens],
+            )
 
     @staticmethod
     def send_to_tokens(
@@ -131,7 +140,7 @@ class NotificationService:
 
     @staticmethod
     def send_to_client(
-        client: Client,
+        client,
         title: str,
         message: str,
         notification_type: str,
@@ -147,18 +156,28 @@ class NotificationService:
             sorted(normalized_data.keys()),
         )
 
-        notification = Notification.objects.create(
-            recipient=client,
+        notification = create_notification(
+            recipient_user_id=getattr(client, "id", None),
+            recipient_role="client",
             title=title,
             push_message=message,
             notification_type=notification_type,
-            status=Notification.Status.PENDING,
+            status="pending",
             is_for_every_one=False,
         )
 
-        tokens = list(
-            client.devices.filter(is_active=True).values_list("fcm_token", flat=True),
-        )
+        tokens: list[str] = []
+        if table_exists("client_devices"):
+            token_rows = fetch_all(
+                """
+                SELECT fcm_token
+                FROM public.client_devices
+                WHERE client_id = %s
+                  AND is_active = TRUE
+                """,
+                [getattr(client, "id", None)],
+            )
+            tokens = [row["fcm_token"] for row in token_rows]
 
         logger.info(
             "Client notification tokens loaded. client_id=%s tokens_total=%s",
@@ -173,13 +192,19 @@ class NotificationService:
             data=normalized_data,
         )
 
-        if response and response.success_count > 0:
-            notification.status = Notification.Status.SENT
-            notification.save(update_fields=["status"])
+        if notification and response and response.success_count > 0:
+            execute(
+                """
+                UPDATE public.notification
+                SET status = 'sent'
+                WHERE id = %s
+                """,
+                [notification["id"]],
+            )
             logger.info(
                 "Client notification marked sent. client_id=%s notification_id=%s success=%s failure=%s",
                 getattr(client, "id", None),
-                getattr(notification, "id", None),
+                notification.get("id"),
                 response.success_count,
                 response.failure_count,
             )
@@ -187,14 +212,14 @@ class NotificationService:
             logger.warning(
                 "Notification remains pending: no successful FCM delivery. client_id=%s notification_id=%s",
                 getattr(client, "id", None),
-                getattr(notification, "id", None),
+                notification.get("id") if notification else None,
             )
 
         return notification
 
     @staticmethod
     def send_to_partner(
-        partner: Partner,
+        partner,
         title: str,
         message: str,
         notification_type: str = "system",
@@ -210,31 +235,34 @@ class NotificationService:
             sorted(normalized_data.keys()),
         )
 
-        # Save to notification history
-        try:
-            PartnerNotification.objects.create(
-                partner=partner,
-                title=title,
-                body=message,
-                notification_type=notification_type,
-                data=data or {},
-                is_read=False,
-            )
-            logger.info(
-                "Partner notification saved to history. partner=%s title=%s",
-                getattr(partner, "id", None),
-                title,
-            )
-        except Exception as exc:
-            logger.error(
-                "Failed to save partner notification to history: %s",
-                exc,
-            )
+        create_notification(
+            recipient_user_id=getattr(partner, "id", None),
+            recipient_role="partner",
+            title=title,
+            push_message=message,
+            notification_type=notification_type,
+            status="pending",
+            is_for_every_one=False,
+        )
+        logger.info(
+            "Partner notification saved to normalized table. partner=%s title=%s",
+            getattr(partner, "id", None),
+            title,
+        )
 
         # Send push notification
-        tokens = list(
-            partner.devices.filter(is_active=True).values_list("fcm_token", flat=True),
-        )
+        tokens: list[str] = []
+        if table_exists("partner_devices"):
+            token_rows = fetch_all(
+                """
+                SELECT fcm_token
+                FROM public.partner_devices
+                WHERE partner_id = %s
+                  AND is_active = TRUE
+                """,
+                [getattr(partner, "id", None)],
+            )
+            tokens = [row["fcm_token"] for row in token_rows]
 
         logger.info(
             "Partner notification tokens loaded. partner_id=%s tokens_total=%s",
@@ -263,13 +291,13 @@ class NotificationService:
         return response
 
     @staticmethod
-    def send_broadcast(notification: Notification):
+    def send_broadcast(notification):
         message = messaging.send(
             messaging.Message(
                 topic="all_clients",
                 notification=messaging.Notification(
-                    title=notification.title,
-                    body=notification.push_message,
+                    title=getattr(notification, "title", None),
+                    body=getattr(notification, "push_message", None),
                 ),
                 data={
                     "type": "system",
@@ -277,5 +305,3 @@ class NotificationService:
             )
         )
         logger.info("Response: %s", message)
-        notification.status = Notification.Status.SENT
-        notification.save(update_fields=["status"])

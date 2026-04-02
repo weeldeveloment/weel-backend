@@ -11,16 +11,14 @@ from typing import Optional
 from init_data_py import InitData
 
 from django.conf import settings
-from django.db import transaction
-from django.db.utils import ProgrammingError
 from django.core.cache import cache
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.hashers import make_password, check_password
 
 from .models.logs import SmsPurpose
-from .models.clients import Client, ClientDevice
 from shared.utility import PASSWORD_REGEX
-from users.models.partners import Partner, PartnerDevice, PartnerTelegramUser
+from shared.raw.entities import RawUser
+from .raw_repository import table_capability_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +240,13 @@ class EskizService:
             )
             raise
 
+    def send_text_sms(self, phone_number: str, message: str):
+        """
+        Sends a plain text SMS via Eskiz without OTP semantics.
+        Reuses send_sms transport/auth flow.
+        """
+        return self.send_sms(phone_number=phone_number, code="", message_template=message)
+
 
 class OTPRedisService:
     OTP_EXPIRE = 60
@@ -451,39 +456,20 @@ class TelegramBindingService:
         Enforces 1-to-1: If this Telegram ID was used by someone else,
         that link is broken (stolen) for the new user.
         """
-        try:
-            with transaction.atomic():
-                # 1. DETACH FROM OTHERS
-                # If this telegram_id is connected to any OTHER partner, delete that connection.
-                # This handles the case: "Telegram user enters as another user"
-                conflicting_bindings = PartnerTelegramUser.objects.filter(
-                    telegram_user_id=tg_user.id
-                ).exclude(partner=partner)
-
-                if conflicting_bindings.exists():
-                    conflicting_bindings.delete()  # Removes the old binding completely
-
-                # 2. ATTACH TO CURRENT PARTNER
-                # We use update_or_create looking up by 'partner'.
-                # This handles the case: "Partner switches TO a new Telegram account"
-                PartnerTelegramUser.objects.update_or_create(
-                    partner=partner,
-                    defaults={
-                        "telegram_user_id": tg_user.id,
-                        "username": tg_user.username,
-                        "is_active": True,
-                    },
-                )
-        except Exception as e:
-            # Log error here
-            print(f"Error binding Telegram user: {e}")
-            pass
+        caps = table_capability_snapshot()
+        if not caps.get("users_partnertelegramuser"):
+            logger.info(
+                "Skipping Telegram binding: users_partnertelegramuser table not present in normalized schema."
+            )
+            return
+        # Legacy path intentionally not used while ORM tables are absent.
+        logger.info("Telegram binding table exists but ORM path is disabled in raw-sql mode.")
 
 
 class ClientDeviceService:
     @staticmethod
     def register_device(
-        client: Client,
+        client: RawUser,
         fcm_token: str,
         device_type: str,
     ):
@@ -495,40 +481,20 @@ class ClientDeviceService:
             )
             return None
 
-        try:
-            deactivated_count = ClientDevice.objects.filter(
-                client=client,
-                device_type=device_type,
-                is_active=True,
-            ).exclude(fcm_token=fcm_token).update(is_active=False)
-
-            client_device, created = ClientDevice.objects.update_or_create(
-                fcm_token=fcm_token,
-                defaults={
-                    "client": client,
-                    "device_type": device_type,
-                    "is_active": True,
-                },
-            )
+        caps = table_capability_snapshot()
+        if not caps.get("client_devices"):
             logger.info(
-                "Client device registered. client_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
-                getattr(client, "id", None),
-                getattr(client_device, "id", None),
-                created,
-                device_type,
-                deactivated_count,
-                f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
+                "Client device registration skipped: client_devices table is absent in normalized schema."
             )
-            return client_device
-        except ProgrammingError:
-            # Surface schema issues immediately instead of falling back to norm_ tables
-            raise
+            return None
+        logger.info("client_devices table exists but ORM path is disabled in raw-sql mode.")
+        return None
 
 
 class PartnerDeviceService:
     @staticmethod
     def register_device(
-        partner: Partner,
+        partner: RawUser,
         fcm_token: str,
         device_type: str,
     ):
@@ -540,30 +506,14 @@ class PartnerDeviceService:
             )
             return None
 
-        deactivated_count = PartnerDevice.objects.filter(
-            partner=partner,
-            device_type=device_type,
-            is_active=True,
-        ).exclude(fcm_token=fcm_token).update(is_active=False)
-
-        partner_device, created = PartnerDevice.objects.update_or_create(
-            fcm_token=fcm_token,
-            defaults={
-                "partner": partner,
-                "device_type": device_type,
-                "is_active": True,
-            },
-        )
-        logger.info(
-            "Partner device registered. partner_id=%s device_id=%s created=%s device_type=%s deactivated_previous=%s token_preview=%s",
-            getattr(partner, "id", None),
-            getattr(partner_device, "id", None),
-            created,
-            device_type,
-            deactivated_count,
-            f"{fcm_token[:8]}...{fcm_token[-4:]}" if len(fcm_token) > 12 else fcm_token,
-        )
-        return partner_device
+        caps = table_capability_snapshot()
+        if not caps.get("partner_devices"):
+            logger.info(
+                "Partner device registration skipped: partner_devices table is absent in normalized schema."
+            )
+            return None
+        logger.info("partner_devices table exists but ORM path is disabled in raw-sql mode.")
+        return None
 
 
 class TelegramService:

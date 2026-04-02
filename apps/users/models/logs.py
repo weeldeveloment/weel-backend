@@ -10,6 +10,7 @@ class SmsPurpose(models.TextChoices):
     REGISTER = ("CL_RGR", "Register")
     PARTNER_LOGIN = ("PR_LGN", "Partner Login")
     PARTNER_REGISTER = ("PR_RGR", "Partner Register")
+    PARTNER_PROPERTY_REMINDER = ("PR_RMD", "Partner Property Reminder")
 
 
 class SmsLog(HardDeleteBaseModel):

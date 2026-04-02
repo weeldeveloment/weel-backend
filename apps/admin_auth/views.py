@@ -1,11 +1,12 @@
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from .authentication import create_admin_tokens, AdminJWTAuthentication
 from .permissions import IsAdminUser
 from .serializers import AdminLoginSerializer, AdminUserSerializer, AdminCreateSerializer
+from .raw_repository import is_super_admin
 
 
 class AdminLoginView(APIView):
@@ -34,8 +35,7 @@ class AdminMeView(APIView):
     def get(self, request):
         user = request.user
 
-        # Verify user is staff/admin
-        if not user.is_staff and not user.is_superuser:
+        if getattr(user, "role", None) != "admin":
             return Response(
                 {'error': 'Access denied. Admin privileges required.'},
                 status=status.HTTP_403_FORBIDDEN
@@ -74,7 +74,7 @@ class AdminRegisterView(APIView):
         },
     )
     def post(self, request):
-        if not request.user.is_superuser:
+        if not is_super_admin(request.user.id):
             return Response(
                 {'error': 'Only superusers can create admin users.'},
                 status=status.HTTP_403_FORBIDDEN,

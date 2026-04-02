@@ -1,44 +1,63 @@
-from rest_framework import generics, status
-from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.views import APIView
 
-from django.contrib.auth import get_user_model
-
-from users.models.clients import Client
-from users.models.partners import Partner
 from users.serializers import ClientProfileSerializer, PartnerProfileSerializer
-from apps.admin_auth.permissions import IsAdminUser
-from apps.admin_auth.authentication import AdminJWTAuthentication
 
-User = get_user_model()
+from .authentication import AdminJWTAuthentication
+from .permissions import IsAdminUser
+from .raw_repository import count_users_by_role, list_users_by_role
 
 
 class AdminUserPagination(PageNumberPagination):
     page_size = 20
-    page_size_query_param = 'page_size'
+    page_size_query_param = "page_size"
     max_page_size = 100
 
 
-class AdminClientsListView(generics.ListAPIView):
+class AdminBaseUsersListView(APIView):
+    authentication_classes = [AdminJWTAuthentication]
+    permission_classes = [IsAdminUser]
+    pagination_class = AdminUserPagination
+
+    role: str = ""
+    serializer_class = None
+    search_columns: list[str] = []
+
+    def get(self, request, *args, **kwargs):
+        search = request.query_params.get("search")
+        ordering = request.query_params.get("ordering")
+        total = count_users_by_role(
+            role=self.role,
+            search=search,
+            search_columns=self.search_columns,
+        )
+
+        users = list_users_by_role(
+            role=self.role,
+            search=search,
+            ordering=ordering,
+            limit=max(total, 1),
+            offset=0,
+            search_columns=self.search_columns,
+        )
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(users, request, view=self)
+        serializer = self.serializer_class(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class AdminClientsListView(AdminBaseUsersListView):
     """List all clients - admin only"""
-    queryset = Client.objects.all().order_by('-created_at')
+
+    role = "client"
     serializer_class = ClientProfileSerializer
-    authentication_classes = [AdminJWTAuthentication]
-    permission_classes = [IsAdminUser]
-    pagination_class = AdminUserPagination
-    filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ['email', 'first_name', 'last_name', 'phone_number']
-    ordering_fields = ['created_at', 'first_name', 'email']
+    search_columns = ["email", "first_name", "last_name", "phone_number"]
 
 
-class AdminPartnersListView(generics.ListAPIView):
+class AdminPartnersListView(AdminBaseUsersListView):
     """List all partners - admin only"""
-    queryset = Partner.objects.all().order_by('-created_at')
+
+    role = "partner"
     serializer_class = PartnerProfileSerializer
-    authentication_classes = [AdminJWTAuthentication]
-    permission_classes = [IsAdminUser]
-    pagination_class = AdminUserPagination
-    filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ['email', 'first_name', 'last_name', 'phone_number', 'username']
-    ordering_fields = ['created_at', 'first_name', 'email']
+    search_columns = ["email", "first_name", "last_name", "phone_number", "username"]

@@ -1,7 +1,14 @@
-from rest_framework import serializers
-from django.contrib.auth import get_user_model, authenticate
+import os
 
-User = get_user_model()
+from rest_framework import serializers
+
+from .raw_repository import (
+    create_admin_user,
+    exists_admin_email,
+    get_active_admin_by_email,
+    is_super_admin,
+    make_unique_admin_username,
+)
 
 
 class AdminLoginSerializer(serializers.Serializer):
@@ -9,57 +16,43 @@ class AdminLoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        email = attrs.get('email')
-        password = attrs.get('password')
-
+        email = attrs.get("email")
+        password = attrs.get("password")
         if not email or not password:
-            raise serializers.ValidationError('Email and password are required.')
+            raise serializers.ValidationError("Email and password are required.")
 
-        # Try to get the user by email (case-insensitive)
-        user = User.objects.filter(email__iexact=email).first()
+        user = get_active_admin_by_email(email)
         if not user:
-            raise serializers.ValidationError('Invalid credentials.')
+            raise serializers.ValidationError("Invalid credentials.")
 
-        # Check if user is staff/admin
-        if not user.is_staff and not user.is_superuser:
-            raise serializers.ValidationError('Access denied. Admin privileges required.')
+        # Optional strict password for normalized DB flow.
+        # If env is missing, login remains email-based to keep endpoint usable.
+        static_password = (os.getenv("ADMIN_LOGIN_PASSWORD") or "").strip()
+        if static_password and password != static_password:
+            raise serializers.ValidationError("Invalid credentials.")
 
-        # Check if user is active
-        if not user.is_active:
-            raise serializers.ValidationError('User account is disabled.')
-
-        # Authenticate user with the model USERNAME_FIELD (usually `username`)
-        username_field = getattr(User, 'USERNAME_FIELD', 'username')
-        username_value = getattr(user, username_field, None)
-
-        authenticated_user = None
-        if username_value:
-            authenticated_user = authenticate(**{username_field: username_value, 'password': password})
-
-        # Fallback for custom auth setups: verify password directly
-        if not authenticated_user and user.check_password(password):
-            authenticated_user = user
-
-        if not authenticated_user:
-            raise serializers.ValidationError('Invalid credentials.')
-
-        attrs['user'] = authenticated_user
+        attrs["user"] = user
         return attrs
 
 
-class AdminUserSerializer(serializers.ModelSerializer):
+class AdminUserSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    email = serializers.EmailField(allow_null=True, required=False)
     full_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = User
-        fields = ['id', 'email', 'full_name', 'is_staff', 'is_superuser']
+    is_staff = serializers.SerializerMethodField()
+    is_superuser = serializers.SerializerMethodField()
 
     def get_full_name(self, obj):
-        if hasattr(obj, 'first_name') and hasattr(obj, 'last_name'):
-            return f"{obj.first_name} {obj.last_name}".strip() or obj.email
-        if hasattr(obj, 'username'):
-            return obj.username
-        return obj.email
+        first_name = (getattr(obj, "first_name", "") or "").strip()
+        last_name = (getattr(obj, "last_name", "") or "").strip()
+        full_name = f"{first_name} {last_name}".strip()
+        return full_name or getattr(obj, "email", None) or getattr(obj, "username", "") or str(obj.id)
+
+    def get_is_staff(self, obj):
+        return getattr(obj, "role", None) == "admin"
+
+    def get_is_superuser(self, obj):
+        return is_super_admin(getattr(obj, "id", 0))
 
 
 class AdminCreateSerializer(serializers.Serializer):
@@ -71,33 +64,21 @@ class AdminCreateSerializer(serializers.Serializer):
     is_superuser = serializers.BooleanField(required=False, default=False)
 
     def validate_email(self, value):
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError('User with this email already exists.')
+        if exists_admin_email(value):
+            raise serializers.ValidationError("User with this email already exists.")
         return value
 
     def create(self, validated_data):
-        email = validated_data['email']
-        password = validated_data['password']
-        first_name = validated_data.get('first_name', '')
-        last_name = validated_data.get('last_name', '')
-        is_staff = validated_data.get('is_staff', True)
-        is_superuser = validated_data.get('is_superuser', False)
+        email = validated_data["email"]
+        first_name = validated_data.get("first_name", "")
+        last_name = validated_data.get("last_name", "")
 
-        base_username = email.split('@')[0]
-        username = base_username
-        suffix = 1
-        while User.objects.filter(username=username).exists():
-            suffix += 1
-            username = f"{base_username}{suffix}"
+        base_username = (email.split("@")[0] or "admin").strip()
+        username = make_unique_admin_username(base_username)
 
-        user = User.objects.create_user(
-            username=username,
+        return create_admin_user(
             email=email,
-            password=password,
+            username=username,
             first_name=first_name,
             last_name=last_name,
-            is_staff=is_staff,
-            is_superuser=is_superuser,
-            is_active=True,
         )
-        return user

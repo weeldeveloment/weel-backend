@@ -1,7 +1,21 @@
+from __future__ import annotations
+
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
-from .models.clients import Client, ClientDevice
+from .models.logs import SmsPurpose
+from .services import OTPRedisService
+from .raw_repository import (
+    ensure_test_partner,
+    exists_partner_email,
+    exists_partner_username,
+    exists_user_by_phone,
+    get_active_user_by_phone,
+)
+
+
+CLIENT_DEVICE_TYPE_CHOICES = (("ios", "iOS"), ("android", "Android"))
+PARTNER_DEVICE_TYPE_CHOICES = (("ios", "iOS"), ("android", "Android"))
 
 
 class OTPCodeFieldAliasMixin:
@@ -13,11 +27,6 @@ class OTPCodeFieldAliasMixin:
             if "otp-code" in data and "otp_code" not in data:
                 data["otp_code"] = data.pop("otp-code")
         return super().to_internal_value(data)
-from .models.partners import Partner, PartnerDevice, PartnerDocument, DocumentType
-from .models.logs import SmsPurpose
-from .services import OTPRedisService, PasswordService
-
-from shared.utility import PASSWORD_REGEX
 
 
 class UserPhoneNumberSerializer(serializers.Serializer):
@@ -34,7 +43,7 @@ class ClientOTPLoginVerifySerializer(OTPCodeFieldAliasMixin, serializers.Seriali
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
         required=False,
-        choices=ClientDevice.ClientDeviceType,
+        choices=CLIENT_DEVICE_TYPE_CHOICES,
     )
     otp_code = serializers.CharField(
         min_length=OTPRedisService.OTP_LENGTH,
@@ -53,16 +62,9 @@ class ClientOTPLoginVerifySerializer(OTPCodeFieldAliasMixin, serializers.Seriali
         if not is_valid:
             raise serializers.ValidationError(message)
 
-        try:
-            client = Client.objects.get(phone_number=phone_number, is_active=True)
-        except Client.DoesNotExist:
-            alt_phone = (
-                phone_number[1:] if phone_number.startswith("+") else f"+{phone_number}"
-            )
-            try:
-                client = Client.objects.get(phone_number=alt_phone, is_active=True)
-            except Client.DoesNotExist:
-                raise serializers.ValidationError(_("Client not found"))
+        client = get_active_user_by_phone(phone_number, role="client")
+        if client is None:
+            raise serializers.ValidationError(_("Client not found"))
 
         attrs["client"] = client
         return attrs
@@ -74,7 +76,7 @@ class ClientRegisterSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, min_length=2, max_length=64)
 
     def validate_phone_number(self, value):
-        if Client.objects.filter(phone_number=value).exists():
+        if exists_user_by_phone(value, role="client"):
             raise serializers.ValidationError(
                 _("Client with this phone number already exists")
             )
@@ -86,7 +88,7 @@ class ClientOTPRegistrationVerifySerializer(OTPCodeFieldAliasMixin, serializers.
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
         required=False,
-        choices=ClientDevice.ClientDeviceType,
+        choices=CLIENT_DEVICE_TYPE_CHOICES,
     )
     otp_code = serializers.CharField(
         min_length=OTPRedisService.OTP_LENGTH,
@@ -109,17 +111,14 @@ class ClientOTPRegistrationVerifySerializer(OTPCodeFieldAliasMixin, serializers.
         is_valid, message = OTPRedisService.verify_otp(
             phone_number, otp_code, SmsPurpose.REGISTER
         )
-
         if not is_valid:
             raise serializers.ValidationError(message)
 
-        attrs["registration_data"] = registration_data
-
-        if Client.objects.filter(phone_number=phone_number).exists():
+        if exists_user_by_phone(phone_number, role="client"):
             raise serializers.ValidationError(_("Client already registered"))
 
+        attrs["registration_data"] = registration_data
         attrs["phone_number"] = phone_number
-
         return attrs
 
 
@@ -127,37 +126,16 @@ class TokenRefreshSerializer(serializers.Serializer):
     refresh = serializers.CharField(required=True)
 
 
-class ClientProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Client
-        fields = (
-            "id",
-            "phone_number",
-            "first_name",
-            "last_name",
-            "avatar",
-        )
-        read_only_fields = ("id", "phone_number")
+class ClientProfileSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    guid = serializers.SerializerMethodField(read_only=True)
+    phone_number = serializers.CharField(read_only=True)
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    avatar = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
-
-# class PartnerPasswordLoginSerializer(serializers.Serializer):
-#     phone_number = serializers.CharField(required=True)
-#     password = serializers.CharField(required=True)
-#
-#     def validate(self, attrs):
-#         phone_number = attrs["phone_number"]
-#         password = attrs["password"]
-#
-#         try:
-#             partner = Partner.objects.get(phone_number=phone_number, is_active=True)
-#         except Partner.DoesNotExist:
-#             raise serializers.ValidationError(_("Invalid credentials"))
-#
-#         if not PasswordService.verify_password(password, partner.password):
-#             raise serializers.ValidationError(_("Invalid credentials"))
-#
-#         attrs["partner"] = partner
-#         return attrs
+    def get_guid(self, obj):
+        return str(obj.guid) if getattr(obj, "guid", None) else None
 
 
 class PartnerOTPLoginSerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
@@ -165,7 +143,7 @@ class PartnerOTPLoginSerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
         required=False,
-        choices=PartnerDevice.PartnerDeviceType,
+        choices=PARTNER_DEVICE_TYPE_CHOICES,
     )
     otp_code = serializers.CharField(
         min_length=OTPRedisService.OTP_LENGTH,
@@ -180,46 +158,17 @@ class PartnerOTPLoginSerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
         is_valid, message = OTPRedisService.verify_otp(
             phone_number, otp_code, SmsPurpose.PARTNER_LOGIN
         )
-
         if not is_valid:
             raise serializers.ValidationError(message)
 
-        try:
-            partner = Partner.objects.get(phone_number=phone_number, is_active=True)
-        except Partner.DoesNotExist:
-            alt_phone = (
-                phone_number[1:]
-                if phone_number.startswith("+")
-                else f"+{phone_number}"
-            )
-            try:
-                partner = Partner.objects.get(
-                    phone_number=alt_phone, is_active=True
-                )
-            except Partner.DoesNotExist:
-                if OTPRedisService.is_test_phone_for_purpose(
-                    phone_number, SmsPurpose.PARTNER_LOGIN
-                ):
-                    canonical = (
-                        phone_number
-                        if phone_number.startswith("+")
-                        else f"+{phone_number}"
-                    )
-                    phone_clean = canonical.replace("+", "").strip()
-                    if not phone_clean.startswith("998"):
-                        phone_clean = "998" + phone_clean
-                    canonical = "+" + phone_clean
-                    partner, created = Partner.objects.get_or_create(
-                        phone_number=canonical,
-                        defaults={
-                            "first_name": "Test",
-                            "last_name": "Partner",
-                            "username": f"test_partner_{phone_clean}",
-                            "is_active": True,
-                        },
-                    )
-                else:
-                    raise serializers.ValidationError(_("Partner not found"))
+        partner = get_active_user_by_phone(phone_number, role="partner")
+        if partner is None:
+            if OTPRedisService.is_test_phone_for_purpose(
+                phone_number, SmsPurpose.PARTNER_LOGIN
+            ):
+                partner = ensure_test_partner(phone_number)
+            else:
+                raise serializers.ValidationError(_("Partner not found"))
 
         attrs["partner"] = partner
         return attrs
@@ -231,40 +180,25 @@ class PartnerOTPRegisterSerializer(serializers.Serializer):
     first_name = serializers.CharField(required=True, min_length=2, max_length=64)
     last_name = serializers.CharField(required=True, min_length=2, max_length=64)
     email = serializers.EmailField(required=False, write_only=True)
-    # password = serializers.RegexField(
-    #     regex=PASSWORD_REGEX,
-    #     required=True,
-    #     write_only=True,
-    #     help_text=_(
-    #         "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character"
-    #     ),
-    # )
 
     def validate_phone_number(self, value):
-        if Partner.objects.filter(phone_number=value).exists():
+        if exists_user_by_phone(value, role="partner"):
             raise serializers.ValidationError(
                 _("Partner with this phone number already exists")
             )
         return value
 
     def validate_username(self, value):
-        if Partner.objects.filter(username=value).exists():
+        if exists_partner_username(value):
             raise serializers.ValidationError(_("Username already exists"))
         return value
 
     def validate_email(self, value):
-        if value and Partner.objects.filter(email=value).exists():
+        if value and exists_partner_email(value):
             raise serializers.ValidationError(
                 _("Partner with this email already exists")
             )
         return value
-
-    # def validate_password(self, value):
-    #     if value and not PasswordService.validate_password_strength(value):
-    #         raise serializers.ValidationError(
-    #             _("Password must be at least 8 characters long")
-    #         )
-    #     return value
 
 
 class PartnerOTPRegisterVerifySerializer(OTPCodeFieldAliasMixin, serializers.Serializer):
@@ -272,7 +206,7 @@ class PartnerOTPRegisterVerifySerializer(OTPCodeFieldAliasMixin, serializers.Ser
     fcm_token = serializers.CharField(required=False, allow_null=True)
     device_type = serializers.ChoiceField(
         required=False,
-        choices=PartnerDevice.PartnerDeviceType,
+        choices=PARTNER_DEVICE_TYPE_CHOICES,
     )
     otp_code = serializers.CharField(
         min_length=OTPRedisService.OTP_LENGTH,
@@ -289,22 +223,19 @@ class PartnerOTPRegisterVerifySerializer(OTPCodeFieldAliasMixin, serializers.Ser
             raise serializers.ValidationError(
                 _("Registration data not found. Please start registration again")
             )
-        otp_code = attrs["otp_code"]
 
+        otp_code = attrs["otp_code"]
         is_valid, message = OTPRedisService.verify_otp(
             phone_number, otp_code, SmsPurpose.PARTNER_REGISTER
         )
-
         if not is_valid:
             raise serializers.ValidationError(message)
 
-        attrs["registration_data"] = registration_data
-
-        if Partner.objects.filter(phone_number=phone_number).exists():
+        if exists_user_by_phone(phone_number, role="partner"):
             raise serializers.ValidationError(_("Partner already registered"))
 
+        attrs["registration_data"] = registration_data
         attrs["phone_number"] = phone_number
-
         return attrs
 
 
@@ -317,25 +248,22 @@ class ResendOTPSerializer(serializers.Serializer):
         return value
 
 
-class PartnerProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Partner
-        fields = [
-            "id",
-            "username",
-            "first_name",
-            "last_name",
-            "phone_number",
-            "avatar",
-            "created_at",
-        ]
-        read_only_fields = ("id", "created_at")
+class PartnerProfileSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    guid = serializers.SerializerMethodField(read_only=True)
+    username = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    first_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    phone_number = serializers.CharField(read_only=True)
+    avatar = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+    def get_guid(self, obj):
+        return str(obj.guid) if getattr(obj, "guid", None) else None
 
 
-class PartnerPassportUploadSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PartnerDocument
-        fields = ("document",)
+class PartnerPassportUploadSerializer(serializers.Serializer):
+    document = serializers.FileField(required=True)
 
     def validate_document(self, file):
         max_size = 5 * 1024 * 1024  # 5MB
@@ -343,43 +271,3 @@ class PartnerPassportUploadSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("File size must be ≤ 5MB")
         return file
 
-    def create(self, validated_data):
-        partner = self.context["partner"]
-
-        # один паспорт на партнёра
-        # PartnerDocument.objects.filter(
-        #     partner=partner,
-        #     type=DocumentType.PASSPORT,
-        # ).delete()
-
-        return PartnerDocument.objects.create(
-            partner=partner,
-            type=DocumentType.PASSPORT,
-            document=validated_data["document"],
-        )
-
-
-# class PartnerChangePasswordSerializer(serializers.Serializer):
-#     current_password = serializers.RegexField(
-#         regex=PASSWORD_REGEX,
-#         required=True,
-#         write_only=True,
-#         help_text=_(
-#             "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character"
-#         ),
-#     )
-#     new_password = serializers.RegexField(
-#         regex=PASSWORD_REGEX,
-#         required=True,
-#         write_only=True,
-#         help_text=_(
-#             "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character"
-#         ),
-#     )
-#
-#     def validate_new_password(self, value):
-#         if not PasswordService.validate_password_strength(value):
-#             raise serializers.ValidationError(
-#                 _("Password must be at least 8 characters long")
-#             )
-#         return value

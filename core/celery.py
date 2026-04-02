@@ -94,6 +94,10 @@ app.conf.beat_schedule = {
         "task": "booking.tasks.send_pending_booking_payment_reminders",
         "schedule": crontab(minute="*/5"),  # every 5 min — 24m / 6m / 1m left to pay
     },
+    "send_partner_property_check_reminders": {
+        "task": "users.send_partner_property_check_reminders",
+        "schedule": crontab(hour=11, minute=0),  # daily at 11:00 (3-day gating inside task)
+    },
 }
 
 # app.conf.task_queues = (
