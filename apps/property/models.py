@@ -736,15 +736,24 @@ def sync_property_from_property_price(sender, instance: PropertyPrice, **kwargs)
 def update_property_comment_count_on_create(
     instance: PropertyReview, created=False, **kwargs
 ):
-    if created:
-        Property.objects.filter(guid=instance.property.guid).update(
-            comment_count=models.F("comment_count") + 1
-        )
+    if not created:
+        return
+
+    # Recompute from source of truth to avoid drift or negative values.
+    review_count = (
+        PropertyReview.objects.filter(property_id=instance.property_id).count()
+    )
+    Property.objects.filter(pk=instance.property_id).update(
+        comment_count=review_count
+    )
 
 
 @receiver(post_delete, sender=PropertyReview)
 def update_property_comment_count_on_delete(instance, **kwargs):
-    # Prevent the counter from going negative when deleting the last review
-    Property.objects.filter(guid=instance.property.guid).update(
-        comment_count=Greatest(models.F("comment_count") - 1, Value(0))
+    # Sync with authoritative review count to avoid constraint violations
+    review_count = (
+        PropertyReview.objects.filter(property_id=instance.property_id).count()
+    )
+    Property.objects.filter(pk=instance.property_id).update(
+        comment_count=review_count
     )
