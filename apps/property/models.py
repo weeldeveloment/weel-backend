@@ -5,6 +5,8 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Value
+from django.db.models.functions import Greatest
 from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
 from django.db.models.signals import pre_save, post_save, post_delete
@@ -742,6 +744,7 @@ def update_property_comment_count_on_create(
 
 @receiver(post_delete, sender=PropertyReview)
 def update_property_comment_count_on_delete(instance, **kwargs):
+    # Prevent the counter from going negative when deleting the last review
     Property.objects.filter(guid=instance.property.guid).update(
-        comment_count=models.F("comment_count") - 1
+        comment_count=Greatest(models.F("comment_count") - 1, Value(0))
     )
