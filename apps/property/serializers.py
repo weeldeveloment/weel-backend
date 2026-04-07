@@ -221,7 +221,7 @@ class PropertyListSerializer(serializers.ModelSerializer):
         if annotated is not None:
             try:
                 v = float(annotated)
-                return round(v, 2) if v > 0 else 1.0
+                return round(v, 2) if v > 0 else 5.0
             except (TypeError, ValueError):
                 pass
         # Fallback: alohida soʻrov (is_hidden=False yoki NULL — yashirin boʻlmagan reviewlar)
@@ -234,7 +234,7 @@ class PropertyListSerializer(serializers.ModelSerializer):
             .aggregate(avg=Avg("rating"))
             .get("avg")
         )
-        return round(average_rating, 2) if average_rating else 1.0
+        return round(average_rating, 2) if average_rating else 5.0
 
     def get_is_favorite(self, obj):
         request = self.context.get("request")
@@ -284,7 +284,7 @@ class PartnerPropertyListSerializer(serializers.ModelSerializer):
         if annotated is not None:
             try:
                 v = float(annotated)
-                return round(v, 2) if v > 0 else 1.0
+                return round(v, 2) if v > 0 else 5.0
             except (TypeError, ValueError):
                 pass
         average_rating = (
@@ -296,7 +296,7 @@ class PartnerPropertyListSerializer(serializers.ModelSerializer):
             .aggregate(avg=Avg("rating"))
             .get("avg")
         )
-        return round(average_rating, 2) if average_rating else 1.0
+        return round(average_rating, 2) if average_rating else 5.0
 
 
 class PropertyListPriceSerializer(serializers.ModelSerializer):
@@ -533,7 +533,7 @@ class PropertyDetailSerializer(LanguageFieldMixin, serializers.ModelSerializer):
             .aggregate(avg=Avg("rating"))
             .get("avg")
         )
-        return round(average_rating, 2) if average_rating else 1.0
+        return round(average_rating, 2) if average_rating else 5.0
 
     def get_is_favorite(self, obj):
         request = self.context.get("request")

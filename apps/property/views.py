@@ -301,7 +301,7 @@ class UnifiedRecommendationsListView(ListAPIView):
                     filter=Q(property_review__is_hidden=False)
                     | Q(property_review__is_hidden__isnull=True),
                 ),
-                Value(0),
+                Value(5.0),
                 output_field=DecimalField(),
             ),
         }
@@ -443,7 +443,7 @@ class CategoryLatestPropertyListView(ListAPIView):
                         filter=Q(property_review__is_hidden=False)
                         | Q(property_review__is_hidden__isnull=True),
                     ),
-                    Value(0),
+                    Value(5.0),
                     output_field=DecimalField(),
                 ),
             )
@@ -503,7 +503,7 @@ class CategoryPropertyRecommendationView(ListAPIView):
                         filter=Q(property_review__is_hidden=False)
                         | Q(property_review__is_hidden__isnull=True),
                     ),
-                    Value(0),
+                    Value(5.0),
                     output_field=DecimalField(),
                 ),
             )
@@ -654,7 +654,7 @@ class PropertyListCreateView(ListCreateAPIView):
                         filter=Q(property_review__is_hidden=False)
                         | Q(property_review__is_hidden__isnull=True),
                     ),
-                    Value(0),
+                    Value(5.0),
                     output_field=DecimalField(),
                 ),
                 order_price=Case(
@@ -1429,7 +1429,7 @@ class PartnerPropertyListView(ListAPIView):
                         filter=Q(property_review__is_hidden=False)
                         | Q(property_review__is_hidden__isnull=True),
                     ),
-                    Value(0),
+                    Value(5.0),
                     output_field=DecimalField(),
                 ),
                 order_price=Case(
@@ -1491,7 +1491,7 @@ class SavedPropertyListView(ListAPIView):
                         filter=Q(property_review__is_hidden=False)
                         | Q(property_review__is_hidden__isnull=True),
                     ),
-                    Value(0),
+                    Value(5.0),
                     output_field=DecimalField(),
                 ),
                 order_price=Case(
